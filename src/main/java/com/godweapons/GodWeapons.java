@@ -13,9 +13,8 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
-import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityShootBowEvent;
-import org.bukkit.event.entity.ProjectileHitEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -28,7 +27,6 @@ import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.EulerAngle;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
-import org.bukkit.event.player.PlayerInteractEvent;
 
 import java.util.*;
 
@@ -134,12 +132,10 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                 }
                 break;
             case "directorscut":
-                // If sneaking, cancel the bow draw and detonate!
                 if (isSneaking) {
                     event.setCancelled(true);
                     if (checkCooldown(player, "cut_to_black", 2000)) detonatePayloads(player);
                 }
-                // If not sneaking, let the event run so they draw the bow normally
                 break;
         }
     }
@@ -161,11 +157,9 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         if ("directorscut".equals(getWeaponId(event.getBow()))) {
             if (!(event.getProjectile() instanceof Arrow arrow)) return;
             
-            // Tag it as a payload
             arrow.getPersistentDataContainer().set(payloadKey, PersistentDataType.BYTE, (byte) 1);
             activePayloads.computeIfAbsent(player.getUniqueId(), k -> new ArrayList<>()).add(arrow);
             
-            // Start the Scripted Trajectory passive
             handleScriptedTrajectory(player, arrow);
         }
     }
@@ -177,16 +171,14 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         ComboData data = comboTracker.getOrDefault(player.getUniqueId(), new ComboData(target.getUniqueId(), 0));
         
         if (!data.targetId.equals(target.getUniqueId())) {
-            data = new ComboData(target.getUniqueId(), 1); // Reset on new target
+            data = new ComboData(target.getUniqueId(), 1); 
         } else {
             data.hits++;
         }
         comboTracker.put(player.getUniqueId(), data);
 
-        // Apply Haste to simulate swing speed increase
-        player.addPotionEffect(new PotionEffect(PotionEffectType.FAST_DIGGING, 40, Math.min(data.hits / 2, 4), false, false, true));
+        player.addPotionEffect(new PotionEffect(PotionEffectType.HASTE, 40, Math.min(data.hits / 2, 4), false, false, true));
         
-        // Reduce cooldowns by 0.2s (200ms)
         Map<String, Long> pCooldowns = cooldowns.getOrDefault(player.getUniqueId(), new HashMap<>());
         for (Map.Entry<String, Long> entry : pCooldowns.entrySet()) {
             entry.setValue(entry.getValue() - 200);
@@ -199,7 +191,6 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         Location start = player.getLocation();
         Vector dir = start.getDirection().normalize();
         
-        // Raytrace to prevent teleporting into walls
         RayTraceResult ray = player.getWorld().rayTraceBlocks(start.clone().add(0, 1, 0), dir, 6.0, FluidCollisionMode.NEVER, true);
         double distance = (ray != null && ray.getHitBlock() != null) ? start.distance(ray.getHitPosition().toLocation(player.getWorld())) - 0.5 : 6.0;
         
@@ -211,7 +202,6 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         worldSound(start, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 0.5f);
         worldSound(end, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 1.0f, 1.2f);
 
-        // Damaging residual rift
         new BukkitRunnable() {
             int ticks = 0;
             @Override
@@ -244,7 +234,6 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                 if (ticks++ > 20) { cancel(); return; }
                 current.add(dir.clone().multiply(1.0));
                 
-                // Horizontal crescent math
                 Vector right = dir.clone().crossProduct(new Vector(0, 1, 0)).normalize();
                 for (double i = -1.5; i <= 1.5; i += 0.2) {
                     Location pLoc = current.clone().add(right.clone().multiply(i));
@@ -254,17 +243,15 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
 
                 for (Entity e : current.getWorld().getNearbyEntities(current, 2, 1, 2)) {
                     if (e instanceof LivingEntity le && !le.getUniqueId().equals(player.getUniqueId()) && !hitTargets.contains(le.getUniqueId())) {
-                        // True Damage implementation
                         double trueDamage = 10.0;
                         le.setHealth(Math.max(0, le.getHealth() - trueDamage));
-                        le.getWorld().spawnParticle(Particle.CRIT_MAGIC, le.getLocation().add(0, 1, 0), 20, 0.5, 0.5, 0.5, 0.2);
+                        le.getWorld().spawnParticle(Particle.ENCHANTED_HIT, le.getLocation().add(0, 1, 0), 20, 0.5, 0.5, 0.5, 0.2);
                         
                         if (le.isDead()) {
                             worldSound(le.getLocation(), Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, 1f, 1.5f);
-                            // Projectile continues if it kills
                         } else {
                             hitTargets.add(le.getUniqueId());
-                            cancel(); // Stop on non-lethal hit
+                            cancel(); 
                             return;
                         }
                     }
@@ -281,7 +268,6 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             @Override
             public void run() {
                 if (arrow.isDead() || arrow.isInBlock()) {
-                    // Start beeping once it hits something (Payload Arrow)
                     startPayloadBeep(arrow);
                     cancel();
                     return;
@@ -290,7 +276,6 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                 Location loc = arrow.getLocation();
                 loc.getWorld().spawnParticle(Particle.END_ROD, loc, 3, 0.1, 0.1, 0.1, 0);
                 
-                // Slipstream speed boost for allies
                 for (Entity e : loc.getWorld().getNearbyEntities(loc, 3, 3, 3)) {
                     if (e instanceof Player p) {
                         p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 40, 2, false, false, true));
@@ -306,9 +291,9 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             public void run() {
                 if (arrow.isDead()) { cancel(); return; }
                 arrow.getWorld().playSound(arrow.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1.5f, 2.0f);
-                arrow.getWorld().spawnParticle(Particle.REDSTONE, arrow.getLocation(), 5, 0.2, 0.2, 0.2, new Particle.DustOptions(Color.RED, 1.5f));
+                arrow.getWorld().spawnParticle(Particle.DUST, arrow.getLocation(), 5, 0.2, 0.2, 0.2, new Particle.DustOptions(Color.RED, 1.5f));
             }
-        }.runTaskTimer(this, 0, 10); // Beep twice a second
+        }.runTaskTimer(this, 0, 10);
     }
 
     private void detonatePayloads(Player player) {
@@ -325,10 +310,8 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             if (arrow.isDead()) continue;
             Location loc = arrow.getLocation();
             
-            // Blast
             loc.getWorld().createExplosion(loc, 3.0f, false, false, player);
             
-            // Shrapnel rain
             for (int i = 0; i < 8; i++) {
                 Arrow shrapnel = loc.getWorld().spawn(loc.clone().add(0, 2, 0), Arrow.class);
                 double rx = (Math.random() - 0.5) * 1.5;
@@ -343,7 +326,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
     }
 
     /* =========================================================================
-       MJOLNIR IMPLEMENTATION (Preserved from V1)
+       MJOLNIR IMPLEMENTATION 
        ========================================================================= */
     private void launchMjolnirHuracan(Player player) {
         Location start = player.getEyeLocation();
