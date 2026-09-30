@@ -1,0 +1,12 @@
+name: GodWeapons
+version: '1.0.0'
+main: com.godweapons.GodWeapons
+api-version: '1.21'
+author: JoeyFish
+description: Unleash divine weapons of mass destruction upon your innocent villagers.
+
+commands:
+  godweapons:
+    description: Master command for managing God Weapons
+    permission: godweapons.admin
+    usage: /<command> give <weapon> [player]
