@@ -28,6 +28,7 @@ import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.EulerAngle;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
+import org.bukkit.event.player.PlayerInteractEvent;
 
 import java.util.*;
 
