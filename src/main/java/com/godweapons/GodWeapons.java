@@ -8,23 +8,25 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
-import org.bukkit.entity.ArmorStand;
-import org.bukkit.entity.Entity;
-import org.bukkit.entity.LivingEntity;
-import org.bukkit.entity.Player;
+import org.bukkit.entity.*;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
-import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityShootBowEvent;
+import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.EulerAngle;
+import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 
 import java.util.*;
@@ -32,257 +34,391 @@ import java.util.*;
 public final class GodWeapons extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
     private NamespacedKey weaponKey;
-    private final Map<UUID, Long> cooldowns = new HashMap<>();
-    private static final long MJOLNIR_COOLDOWN_MS = 4000; // 4 seconds
+    private NamespacedKey payloadKey;
+    
+    // Cooldowns
+    private final Map<UUID, Map<String, Long>> cooldowns = new HashMap<>();
+    
+    // Sword Passive Tracking: player UUID -> (target UUID + combo count)
+    private final Map<UUID, ComboData> comboTracker = new HashMap<>();
+    
+    // Bow Active Tracking: player UUID -> List of active payload arrows
+    private final Map<UUID, List<Arrow>> activePayloads = new HashMap<>();
 
     @Override
     public void onEnable() {
         this.weaponKey = new NamespacedKey(this, "weapon_id");
+        this.payloadKey = new NamespacedKey(this, "is_payload");
 
-        // Register events & command executor
         getServer().getPluginManager().registerEvents(this, this);
         if (getCommand("godweapons") != null) {
             getCommand("godweapons").setExecutor(this);
             getCommand("godweapons").setTabCompleter(this);
         }
-
-        getLogger().info("⚡ God Weapons prototype online! Ready to shatter reality.");
-    }
-
-    @Override
-    public void onDisable() {
-        cooldowns.clear();
-        getLogger().info("God Weapons disabled. The gods have retreated.");
+        getLogger().info("⚡ God Weapons V2 online! Dimension Ripper and Director's Cut loaded.");
     }
 
     /* =========================================================================
-       ITEM CREATION: MJÖLNIR
+       WEAPON FACTORIES
        ========================================================================= */
-    public ItemStack createMjolnir() {
-        ItemStack item = new ItemStack(Material.NETHERITE_AXE);
-        ItemMeta meta = item.getItemMeta();
-        if (meta == null) return item;
-
-        // Custom Adventure displayName & Lore
-        meta.displayName(Component.text("Mjölnir, Shatterer of Horizons", NamedTextColor.GOLD)
-                .decoration(TextDecoration.BOLD, true)
-                .decoration(TextDecoration.ITALIC, false));
-
+    public ItemStack createWeapon(String type) {
+        ItemStack item;
+        ItemMeta meta;
         List<Component> lore = new ArrayList<>();
-        lore.add(Component.text("Mythic Artifact • Asgardian Lineage", NamedTextColor.DARK_GRAY));
-        lore.add(Component.empty());
-        lore.add(Component.text("Passive: Supercell Conduit", NamedTextColor.AQUA)
-                .decoration(TextDecoration.BOLD, true));
-        lore.add(Component.text("Melee attacks on wet entities unleash chain lightning.", NamedTextColor.GRAY));
-        lore.add(Component.empty());
-        lore.add(Component.text("Active: Thunderous Huracan [Right-Click]", NamedTextColor.YELLOW)
-                .decoration(TextDecoration.BOLD, true));
-        lore.add(Component.text("Hurls Mjölnir in a kinetic spiral wave. On collision,", NamedTextColor.GRAY));
-        lore.add(Component.text("calls down an Asgardian lightning tempest.", NamedTextColor.GRAY));
+
+        switch (type.toLowerCase()) {
+            case "mjolnir":
+                item = new ItemStack(Material.NETHERITE_AXE);
+                meta = item.getItemMeta();
+                meta.displayName(Component.text("Mjölnir, Shatterer of Horizons", NamedTextColor.GOLD).decoration(TextDecoration.BOLD, true));
+                lore.add(Component.text("Active: Thunderous Huracan [Right-Click]", NamedTextColor.YELLOW));
+                break;
+            case "dimensionripper":
+                item = new ItemStack(Material.NETHERITE_SWORD);
+                meta = item.getItemMeta();
+                meta.displayName(Component.text("The Dimension Ripper", NamedTextColor.DARK_PURPLE).decoration(TextDecoration.BOLD, true));
+                lore.add(Component.text("Passive: Frame Advantage (Consecutive hits grant Haste & lower cooldowns)", NamedTextColor.LIGHT_PURPLE));
+                lore.add(Component.text("Active 1: Phantom Dash [Right-Click]", NamedTextColor.AQUA));
+                lore.add(Component.text("Active 2: Reality Cleave [Shift + Right-Click]", NamedTextColor.RED));
+                break;
+            case "directorscut":
+                item = new ItemStack(Material.BOW);
+                meta = item.getItemMeta();
+                meta.displayName(Component.text("The Director's Cut", NamedTextColor.DARK_RED).decoration(TextDecoration.BOLD, true));
+                lore.add(Component.text("Passive: Scripted Trajectories (Slipstreams grant speed)", NamedTextColor.GRAY));
+                lore.add(Component.text("Active 1: Payload Arrow [Shoot Bow]", NamedTextColor.YELLOW));
+                lore.add(Component.text("Active 2: Cut to Black [Shift + Right-Click]", NamedTextColor.DARK_RED));
+                break;
+            default:
+                return null;
+        }
+
         meta.lore(lore);
-
-        // PersistentDataContainer Identity
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
-        pdc.set(weaponKey, PersistentDataType.STRING, "mjolnir");
-
+        meta.getPersistentDataContainer().set(weaponKey, PersistentDataType.STRING, type.toLowerCase());
         meta.setUnbreakable(true);
         meta.addItemFlags(ItemFlag.HIDE_UNBREAKABLE, ItemFlag.HIDE_ATTRIBUTES);
         item.setItemMeta(meta);
-
         return item;
     }
 
-    private boolean isMjolnir(ItemStack item) {
-        if (item == null || !item.hasItemMeta()) return false;
-        PersistentDataContainer pdc = item.getItemMeta().getPersistentDataContainer();
-        return "mjolnir".equals(pdc.get(weaponKey, PersistentDataType.STRING));
+    private String getWeaponId(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) return null;
+        return item.getItemMeta().getPersistentDataContainer().get(weaponKey, PersistentDataType.STRING);
     }
 
     /* =========================================================================
-       COMBAT & ABILITY LISTENERS
+       COMBAT & INTERACTION EVENT ROUTER
        ========================================================================= */
     @EventHandler
     public void onInteract(PlayerInteractEvent event) {
-        if (event.getAction() != Action.RIGHT_CLICK_AIR && event.getAction() != Action.RIGHT_CLICK_BLOCK) {
-            return;
-        }
+        if (event.getAction() != Action.RIGHT_CLICK_AIR && event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
 
         Player player = event.getPlayer();
-        ItemStack item = player.getInventory().getItemInMainHand();
+        String weaponId = getWeaponId(player.getInventory().getItemInMainHand());
+        if (weaponId == null) return;
 
-        if (!isMjolnir(item)) return;
-        event.setCancelled(true);
+        boolean isSneaking = player.isSneaking();
 
-        // Check cooldown
-        long now = System.currentTimeMillis();
-        long lastUse = cooldowns.getOrDefault(player.getUniqueId(), 0L);
-        if (now - lastUse < MJOLNIR_COOLDOWN_MS) {
-            long remaining = (MJOLNIR_COOLDOWN_MS - (now - lastUse)) / 1000 + 1;
-            player.sendMessage(Component.text("⏳ Mjölnir is recharging: " + remaining + "s", NamedTextColor.RED));
-            player.playSound(player.getLocation(), Sound.BLOCK_DISPENSER_FAIL, 0.8f, 1.5f);
-            return;
+        switch (weaponId) {
+            case "mjolnir":
+                event.setCancelled(true);
+                if (checkCooldown(player, "mjolnir", 4000)) launchMjolnirHuracan(player);
+                break;
+            case "dimensionripper":
+                event.setCancelled(true);
+                if (isSneaking) {
+                    if (checkCooldown(player, "reality_cleave", 8000)) launchRealityCleave(player);
+                } else {
+                    if (checkCooldown(player, "phantom_dash", 5000)) executePhantomDash(player);
+                }
+                break;
+            case "directorscut":
+                // If sneaking, cancel the bow draw and detonate!
+                if (isSneaking) {
+                    event.setCancelled(true);
+                    if (checkCooldown(player, "cut_to_black", 2000)) detonatePayloads(player);
+                }
+                // If not sneaking, let the event run so they draw the bow normally
+                break;
         }
-
-        cooldowns.put(player.getUniqueId(), now);
-        launchMjolnirHuracan(player);
     }
 
     @EventHandler
     public void onMelee(EntityDamageByEntityEvent event) {
         if (!(event.getDamager() instanceof Player player)) return;
-        if (!isMjolnir(player.getInventory().getItemInMainHand())) return;
+        String weaponId = getWeaponId(player.getInventory().getItemInMainHand());
+        if (weaponId == null) return;
 
-        // Passive Supercell procs when target or attacker is wet
-        if (event.getEntity() instanceof LivingEntity target) {
-            if (target.isInWaterOrRain() || player.isInWaterOrRain()) {
-                target.getWorld().strikeLightningEffect(target.getLocation());
-                target.damage(6.0, player);
-                player.sendMessage(Component.text("⚡ Supercell Conduit triggered!", NamedTextColor.AQUA));
-            }
+        if (weaponId.equals("dimensionripper") && event.getEntity() instanceof LivingEntity target) {
+            handleFrameAdvantage(player, target);
+        }
+    }
+
+    @EventHandler
+    public void onBowShoot(EntityShootBowEvent event) {
+        if (!(event.getEntity() instanceof Player player)) return;
+        if ("directorscut".equals(getWeaponId(event.getBow()))) {
+            if (!(event.getProjectile() instanceof Arrow arrow)) return;
+            
+            // Tag it as a payload
+            arrow.getPersistentDataContainer().set(payloadKey, PersistentDataType.BYTE, (byte) 1);
+            activePayloads.computeIfAbsent(player.getUniqueId(), k -> new ArrayList<>()).add(arrow);
+            
+            // Start the Scripted Trajectory passive
+            handleScriptedTrajectory(player, arrow);
         }
     }
 
     /* =========================================================================
-       PHYSICS & PARTICLE ENGINE (HURACAN PROTOTYPE)
+       THE DIMENSION RIPPER IMPLEMENTATION
        ========================================================================= */
-    private void launchMjolnirHuracan(Player player) {
-        Location startLoc = player.getEyeLocation();
-        Vector direction = startLoc.getDirection().normalize();
-        World world = player.getWorld();
+    private void handleFrameAdvantage(Player player, LivingEntity target) {
+        ComboData data = comboTracker.getOrDefault(player.getUniqueId(), new ComboData(target.getUniqueId(), 0));
+        
+        if (!data.targetId.equals(target.getUniqueId())) {
+            data = new ComboData(target.getUniqueId(), 1); // Reset on new target
+        } else {
+            data.hits++;
+        }
+        comboTracker.put(player.getUniqueId(), data);
 
-        // Audio layer 1: Kinetic release & bass crackle
-        world.playSound(startLoc, Sound.ITEM_TRIDENT_THROW, 1.5f, 0.6f);
-        world.playSound(startLoc, Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 1.2f, 1.8f);
+        // Apply Haste to simulate swing speed increase
+        player.addPotionEffect(new PotionEffect(PotionEffectType.FAST_DIGGING, 40, Math.min(data.hits / 2, 4), false, false, true));
+        
+        // Reduce cooldowns by 0.2s (200ms)
+        Map<String, Long> pCooldowns = cooldowns.getOrDefault(player.getUniqueId(), new HashMap<>());
+        for (Map.Entry<String, Long> entry : pCooldowns.entrySet()) {
+            entry.setValue(entry.getValue() - 200);
+        }
+        
+        worldSound(player.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 0.5f, 1.5f + (data.hits * 0.1f));
+    }
 
-        // Visual spinning projectile entity (Invisible ArmorStand holding the axe)
-        ArmorStand projectile = world.spawn(startLoc.clone().subtract(0, 1.2, 0), ArmorStand.class, stand -> {
-            stand.setVisible(false);
-            stand.setGravity(false);
-            stand.setMarker(true);
-            stand.setSmall(true);
-            stand.getEquipment().setItemInMainHand(new ItemStack(Material.NETHERITE_AXE));
-        });
+    private void executePhantomDash(Player player) {
+        Location start = player.getLocation();
+        Vector dir = start.getDirection().normalize();
+        
+        // Raytrace to prevent teleporting into walls
+        RayTraceResult ray = player.getWorld().rayTraceBlocks(start.clone().add(0, 1, 0), dir, 6.0, FluidCollisionMode.NEVER, true);
+        double distance = (ray != null && ray.getHitBlock() != null) ? start.distance(ray.getHitPosition().toLocation(player.getWorld())) - 0.5 : 6.0;
+        
+        Location end = start.clone().add(dir.multiply(distance));
+        end.setYaw(start.getYaw());
+        end.setPitch(start.getPitch());
+
+        player.teleport(end);
+        worldSound(start, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 0.5f);
+        worldSound(end, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 1.0f, 1.2f);
+
+        // Damaging residual rift
+        new BukkitRunnable() {
+            int ticks = 0;
+            @Override
+            public void run() {
+                if (ticks++ > 40) { cancel(); return; }
+                player.getWorld().spawnParticle(Particle.PORTAL, start.clone().add(0, 1, 0), 15, 0.5, 1, 0.5, 0.1);
+                for (Entity e : player.getWorld().getNearbyEntities(start, 1.5, 1.5, 1.5)) {
+                    if (e instanceof LivingEntity le && !le.getUniqueId().equals(player.getUniqueId())) {
+                        le.damage(4.0, player);
+                    }
+                }
+            }
+        }.runTaskTimer(this, 0, 1);
+    }
+
+    private void launchRealityCleave(Player player) {
+        Location start = player.getEyeLocation();
+        Vector dir = start.getDirection().normalize();
+        
+        worldSound(start, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.5f, 0.5f);
+        worldSound(start, Sound.BLOCK_AMETHYST_BLOCK_BREAK, 1.2f, 1.5f);
 
         new BukkitRunnable() {
             int ticks = 0;
-            Location currentLoc = startLoc.clone();
-            final Set<UUID> hitEntities = new HashSet<>();
+            Location current = start.clone();
+            final Set<UUID> hitTargets = new HashSet<>();
 
             @Override
             public void run() {
-                if (ticks++ > 30 || !projectile.isValid()) { // ~1.5 second flight max (30 blocks)
-                    detonateImpact(currentLoc, player);
-                    projectile.remove();
-                    cancel();
-                    return;
+                if (ticks++ > 20) { cancel(); return; }
+                current.add(dir.clone().multiply(1.0));
+                
+                // Horizontal crescent math
+                Vector right = dir.clone().crossProduct(new Vector(0, 1, 0)).normalize();
+                for (double i = -1.5; i <= 1.5; i += 0.2) {
+                    Location pLoc = current.clone().add(right.clone().multiply(i));
+                    pLoc.getWorld().spawnParticle(Particle.SOUL_FIRE_FLAME, pLoc, 1, 0, 0, 0, 0);
+                    pLoc.getWorld().spawnParticle(Particle.SWEEP_ATTACK, pLoc, 1, 0, 0, 0, 0);
                 }
 
-                // Advance forward 1 block per tick
-                currentLoc.add(direction.clone().multiply(1.1));
-                projectile.teleport(currentLoc.clone().subtract(0, 0.7, 0));
-
-                // Spin the hammer visually
-                double angle = ticks * 0.8;
-                projectile.setRightArmPose(new EulerAngle(angle, 0, 0));
-
-                // Particle flair: High velocity electric rings + shockwaves
-                world.spawnParticle(Particle.ELECTRIC_SPARK, currentLoc, 8, 0.3, 0.3, 0.3, 0.05);
-                world.spawnParticle(Particle.SWEEP_ATTACK, currentLoc, 1, 0, 0, 0, 0);
-
-                // Collision detection with non-solid blocks
-                if (currentLoc.getBlock().getType().isSolid()) {
-                    detonateImpact(currentLoc, player);
-                    projectile.remove();
-                    cancel();
-                    return;
-                }
-
-                // Collision sweep for nearby living entities
-                for (Entity entity : world.getNearbyEntities(currentLoc, 1.2, 1.2, 1.2)) {
-                    if (entity instanceof LivingEntity target && !target.getUniqueId().equals(player.getUniqueId())) {
-                        if (hitEntities.add(target.getUniqueId())) {
-                            target.damage(14.0, player);
-                            // Kinetic launch vector (away from blast line)
-                            target.setVelocity(direction.clone().multiply(0.9).setY(0.4));
-                            world.playSound(target.getLocation(), Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.2f, 1.0f);
+                for (Entity e : current.getWorld().getNearbyEntities(current, 2, 1, 2)) {
+                    if (e instanceof LivingEntity le && !le.getUniqueId().equals(player.getUniqueId()) && !hitTargets.contains(le.getUniqueId())) {
+                        // True Damage implementation
+                        double trueDamage = 10.0;
+                        le.setHealth(Math.max(0, le.getHealth() - trueDamage));
+                        le.getWorld().spawnParticle(Particle.CRIT_MAGIC, le.getLocation().add(0, 1, 0), 20, 0.5, 0.5, 0.5, 0.2);
+                        
+                        if (le.isDead()) {
+                            worldSound(le.getLocation(), Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, 1f, 1.5f);
+                            // Projectile continues if it kills
+                        } else {
+                            hitTargets.add(le.getUniqueId());
+                            cancel(); // Stop on non-lethal hit
+                            return;
                         }
                     }
                 }
             }
-        }.runTaskTimer(this, 0L, 1L);
-    }
-
-    private void detonateImpact(Location location, Player source) {
-        World world = location.getWorld();
-        if (world == null) return;
-
-        // Visual flash & shockwave
-        world.spawnParticle(Particle.FLASH, location, 2, 0, 0, 0, 0);
-        world.spawnParticle(Particle.EXPLOSION, location, 1, 0, 0, 0, 0);
-        world.spawnParticle(Particle.CLOUD, location, 25, 0.5, 0.2, 0.5, 0.1);
-
-        // Stereo sound detonation
-        world.playSound(location, Sound.ENTITY_GENERIC_EXPLODE, 1.6f, 0.8f);
-        world.playSound(location, Sound.ITEM_TRIDENT_THUNDER, 2.0f, 0.9f);
-
-        // Strike true divine lightning
-        world.strikeLightning(location);
-
-        // Area-of-effect shockwave damage & launch
-        for (Entity nearby : world.getNearbyEntities(location, 4.0, 3.0, 4.0)) {
-            if (nearby instanceof LivingEntity target && !target.getUniqueId().equals(source.getUniqueId())) {
-                target.damage(8.0, source);
-                Vector knockup = target.getLocation().toVector().subtract(location.toVector()).normalize().setY(0.5);
-                target.setVelocity(knockup.multiply(0.8));
-            }
-        }
+        }.runTaskTimer(this, 0, 1);
     }
 
     /* =========================================================================
-       COMMANDS & TAB COMPLETION
+       THE DIRECTOR'S CUT IMPLEMENTATION
        ========================================================================= */
+    private void handleScriptedTrajectory(Player player, Arrow arrow) {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (arrow.isDead() || arrow.isInBlock()) {
+                    // Start beeping once it hits something (Payload Arrow)
+                    startPayloadBeep(arrow);
+                    cancel();
+                    return;
+                }
+                
+                Location loc = arrow.getLocation();
+                loc.getWorld().spawnParticle(Particle.END_ROD, loc, 3, 0.1, 0.1, 0.1, 0);
+                
+                // Slipstream speed boost for allies
+                for (Entity e : loc.getWorld().getNearbyEntities(loc, 3, 3, 3)) {
+                    if (e instanceof Player p) {
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 40, 2, false, false, true));
+                    }
+                }
+            }
+        }.runTaskTimer(this, 0, 1);
+    }
+
+    private void startPayloadBeep(Arrow arrow) {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (arrow.isDead()) { cancel(); return; }
+                arrow.getWorld().playSound(arrow.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1.5f, 2.0f);
+                arrow.getWorld().spawnParticle(Particle.REDSTONE, arrow.getLocation(), 5, 0.2, 0.2, 0.2, new Particle.DustOptions(Color.RED, 1.5f));
+            }
+        }.runTaskTimer(this, 0, 10); // Beep twice a second
+    }
+
+    private void detonatePayloads(Player player) {
+        List<Arrow> arrows = activePayloads.get(player.getUniqueId());
+        if (arrows == null || arrows.isEmpty()) {
+            player.sendMessage(Component.text("No active payloads to detonate!", NamedTextColor.RED));
+            return;
+        }
+
+        player.sendMessage(Component.text("🎬 CUT!", NamedTextColor.DARK_RED).decoration(TextDecoration.BOLD, true));
+        worldSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1.0f, 0.5f);
+
+        for (Arrow arrow : arrows) {
+            if (arrow.isDead()) continue;
+            Location loc = arrow.getLocation();
+            
+            // Blast
+            loc.getWorld().createExplosion(loc, 3.0f, false, false, player);
+            
+            // Shrapnel rain
+            for (int i = 0; i < 8; i++) {
+                Arrow shrapnel = loc.getWorld().spawn(loc.clone().add(0, 2, 0), Arrow.class);
+                double rx = (Math.random() - 0.5) * 1.5;
+                double rz = (Math.random() - 0.5) * 1.5;
+                shrapnel.setVelocity(new Vector(rx, -1.0, rz).normalize().multiply(1.5));
+                shrapnel.setShooter(player);
+                shrapnel.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
+            }
+            arrow.remove();
+        }
+        arrows.clear();
+    }
+
+    /* =========================================================================
+       MJOLNIR IMPLEMENTATION (Preserved from V1)
+       ========================================================================= */
+    private void launchMjolnirHuracan(Player player) {
+        Location start = player.getEyeLocation();
+        Vector dir = start.getDirection().normalize();
+        worldSound(start, Sound.ITEM_TRIDENT_THROW, 1.5f, 0.6f);
+        
+        ArmorStand stand = start.getWorld().spawn(start.clone().subtract(0, 1.2, 0), ArmorStand.class, s -> {
+            s.setVisible(false); s.setMarker(true); s.setGravity(false); s.setSmall(true);
+            s.getEquipment().setItemInMainHand(new ItemStack(Material.NETHERITE_AXE));
+        });
+
+        new BukkitRunnable() {
+            int ticks = 0;
+            Location current = start.clone();
+            @Override
+            public void run() {
+                if (ticks++ > 30 || !stand.isValid()) {
+                    current.getWorld().strikeLightning(current);
+                    stand.remove(); cancel(); return;
+                }
+                current.add(dir.clone().multiply(1.1));
+                stand.teleport(current.clone().subtract(0, 0.7, 0));
+                stand.setRightArmPose(new EulerAngle(ticks * 0.8, 0, 0));
+                current.getWorld().spawnParticle(Particle.ELECTRIC_SPARK, current, 8, 0.3, 0.3, 0.3, 0.05);
+            }
+        }.runTaskTimer(this, 0, 1);
+    }
+
+    /* =========================================================================
+       UTILITIES & COMMANDS
+       ========================================================================= */
+    private boolean checkCooldown(Player player, String ability, long durationMs) {
+        Map<String, Long> pCooldowns = cooldowns.computeIfAbsent(player.getUniqueId(), k -> new HashMap<>());
+        long last = pCooldowns.getOrDefault(ability, 0L);
+        long now = System.currentTimeMillis();
+        
+        if (now - last < durationMs) {
+            player.sendMessage(Component.text("⏳ On cooldown: " + ((durationMs - (now - last))/1000 + 1) + "s", NamedTextColor.RED));
+            return false;
+        }
+        pCooldowns.put(ability, now);
+        return true;
+    }
+
+    private void worldSound(Location loc, Sound sound, float vol, float pitch) {
+        if (loc.getWorld() != null) loc.getWorld().playSound(loc, sound, vol, pitch);
+    }
+
+    private static class ComboData {
+        UUID targetId; int hits;
+        ComboData(UUID id, int h) { targetId = id; hits = h; }
+    }
+
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!sender.hasPermission("godweapons.admin")) {
-            sender.sendMessage(Component.text("You lack divine authority to wield this command.", NamedTextColor.RED));
-            return true;
-        }
-
-        if (args.length >= 2 && args[0].equalsIgnoreCase("give") && args[1].equalsIgnoreCase("mjolnir")) {
-            Player target = null;
-            if (args.length >= 3) {
-                target = Bukkit.getPlayer(args[2]);
-            } else if (sender instanceof Player p) {
-                target = p;
-            }
-
-            if (target == null) {
-                sender.sendMessage(Component.text("Player not found or offline.", NamedTextColor.RED));
+        if (!sender.hasPermission("godweapons.admin")) return true;
+        if (args.length >= 2 && args[0].equalsIgnoreCase("give")) {
+            Player target = (args.length >= 3) ? Bukkit.getPlayer(args[2]) : (sender instanceof Player p ? p : null);
+            if (target == null) return true;
+            
+            ItemStack weapon = createWeapon(args[1]);
+            if (weapon == null) {
+                sender.sendMessage(Component.text("Unknown weapon. Try: mjolnir, dimensionripper, directorscut", NamedTextColor.RED));
                 return true;
             }
-
-            target.getInventory().addItem(createMjolnir());
-            target.sendMessage(Component.text("⚡ Mjölnir descends into your hands!", NamedTextColor.GOLD));
-            target.playSound(target.getLocation(), Sound.ITEM_TOTEM_USE, 0.8f, 1.2f);
-            sender.sendMessage(Component.text("Bestowed Mjölnir upon " + target.getName(), NamedTextColor.GREEN));
-            return true;
+            target.getInventory().addItem(weapon);
+            sender.sendMessage(Component.text("Bestowed weapon upon " + target.getName(), NamedTextColor.GREEN));
         }
-
-        sender.sendMessage(Component.text("Usage: /godweapons give mjolnir [player]", NamedTextColor.YELLOW));
         return true;
     }
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (args.length == 1) {
-            return List.of("give");
-        }
-        if (args.length == 2 && args[0].equalsIgnoreCase("give")) {
-            return List.of("mjolnir");
-        }
-        if (args.length == 3 && args[0].equalsIgnoreCase("give")) {
-            return Bukkit.getOnlinePlayers().stream().map(Player::getName).toList();
-        }
+        if (args.length == 1) return List.of("give");
+        if (args.length == 2) return List.of("mjolnir", "dimensionripper", "directorscut");
+        if (args.length == 3) return Bukkit.getOnlinePlayers().stream().map(Player::getName).toList();
         return Collections.emptyList();
     }
 }
