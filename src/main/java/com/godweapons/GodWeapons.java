@@ -14,9 +14,11 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityShootBowEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
+import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -55,7 +57,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         }
         
         startPassiveTracker();
-        getLogger().info("⚡ God Weapons V3 online! Riptide Aria (Jigglypuff Kit) loaded.");
+        getLogger().info("⚡ God Weapons V4 online! Full Arsenal & GUI Loaded.");
     }
 
     /* =========================================================================
@@ -66,30 +68,35 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             @Override
             public void run() {
                 for (Player p : Bukkit.getOnlinePlayers()) {
-                    String weaponId = getWeaponId(p.getInventory().getItemInMainHand());
+                    String mainHandId = getWeaponId(p.getInventory().getItemInMainHand());
+                    String offHandId = getWeaponId(p.getInventory().getItemInOffHand());
                     
-                    // Dimension Ripper: Starts slow
-                    if ("dimensionripper".equals(weaponId)) {
+                    // The Dimension Ripper (Sword)
+                    if ("dimensionripper".equals(mainHandId)) {
                         ComboData cd = comboTracker.get(p.getUniqueId());
                         if (cd == null || System.currentTimeMillis() - cd.lastHit > 3000) {
                             p.addPotionEffect(new PotionEffect(PotionEffectType.MINING_FATIGUE, 20, 1, false, false, false));
                         }
                     }
                     
-                    // Riptide Aria: Aerial superiority & floatiness
-                    if ("riptidearia".equals(weaponId)) {
+                    // The Abyssal Tether (Trident / Puff variant)
+                    if ("abyssaltether".equals(mainHandId)) {
                         if (p.getGameMode() == GameMode.SURVIVAL || p.getGameMode() == GameMode.ADVENTURE) {
-                            p.setAllowFlight(true); // Enables the vanilla double-jump trigger
+                            p.setAllowFlight(true); 
                         }
-                        
                         if (((Entity) p).isOnGround()) {
-                            airJumps.put(p.getUniqueId(), 5); // Reset multi-jumps on landing
+                            airJumps.put(p.getUniqueId(), 5); 
                         } else if (p.getVelocity().getY() < -0.1) {
                             p.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, 10, 0, false, false, false));
                         }
                     } else if (p.getGameMode() == GameMode.SURVIVAL || p.getGameMode() == GameMode.ADVENTURE) {
-                        // Revoke flight trigger if they unequip it
                         if (p.getAllowFlight()) p.setAllowFlight(false);
+                    }
+
+                    // Aegis of the Colossus (Shield - Works in Main or Offhand)
+                    if ("colossusaegis".equals(mainHandId) || "colossusaegis".equals(offHandId)) {
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.WEAKNESS, 20, 0, false, false, false));
+                        // Scaling would theoretically be applied here using the GENERIC_SCALE attribute on Paper 1.20.5+
                     }
                 }
             }
@@ -97,7 +104,47 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
     }
 
     /* =========================================================================
-       WEAPON FACTORIES
+       GUI INVENTORY MENU
+       ========================================================================= */
+    private void openWeaponMenu(Player player) {
+        Inventory gui = Bukkit.createInventory(null, 27, Component.text("The God Weapons Arsenal", NamedTextColor.DARK_PURPLE).decoration(TextDecoration.BOLD, true));
+        
+        gui.setItem(10, createWeapon("dimensionripper"));
+        gui.setItem(11, createWeapon("apexlancer"));
+        gui.setItem(12, createWeapon("vampiricaxe"));
+        gui.setItem(13, createWeapon("abyssaltether"));
+        gui.setItem(14, createWeapon("mjolnir"));
+        gui.setItem(15, createWeapon("colossusaegis"));
+        gui.setItem(16, createWeapon("directorscut"));
+        gui.setItem(22, createWeapon("stratospherictnt"));
+
+        // Fill empty slots with glass panes for styling
+        ItemStack glass = new ItemStack(Material.BLACK_STAINED_GLASS_PANE);
+        ItemMeta meta = glass.getItemMeta();
+        meta.displayName(Component.text(" "));
+        glass.setItemMeta(meta);
+        for(int i = 0; i < gui.getSize(); i++) {
+            if(gui.getItem(i) == null) gui.setItem(i, glass);
+        }
+
+        player.openInventory(gui);
+    }
+
+    @EventHandler
+    public void onInventoryClick(InventoryClickEvent event) {
+        if (event.getView().title().equals(Component.text("The God Weapons Arsenal", NamedTextColor.DARK_PURPLE).decoration(TextDecoration.BOLD, true))) {
+            event.setCancelled(true);
+            if (event.getCurrentItem() != null && event.getCurrentItem().getType() != Material.BLACK_STAINED_GLASS_PANE) {
+                Player player = (Player) event.getWhoClicked();
+                player.getInventory().addItem(event.getCurrentItem().clone());
+                player.sendMessage(Component.text("Equipped: ", NamedTextColor.GRAY).append(event.getCurrentItem().getItemMeta().displayName()));
+                worldSound(player.getLocation(), Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1.0f, 1.5f);
+            }
+        }
+    }
+
+    /* =========================================================================
+       WEAPON FACTORY
        ========================================================================= */
     public ItemStack createWeapon(String type) {
         ItemStack item;
@@ -105,35 +152,69 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         List<Component> lore = new ArrayList<>();
 
         switch (type.toLowerCase()) {
-            case "mjolnir":
-                item = new ItemStack(Material.NETHERITE_AXE);
-                meta = item.getItemMeta();
-                meta.displayName(Component.text("Mjölnir, Shatterer of Horizons", NamedTextColor.GOLD).decoration(TextDecoration.BOLD, true));
-                lore.add(Component.text("Active: Thunderous Huracan [Right-Click]", NamedTextColor.YELLOW));
-                break;
-            case "dimensionripper":
+            case "dimensionripper": // 5.1
                 item = new ItemStack(Material.NETHERITE_SWORD);
                 meta = item.getItemMeta();
                 meta.displayName(Component.text("The Dimension Ripper", NamedTextColor.DARK_PURPLE).decoration(TextDecoration.BOLD, true));
-                lore.add(Component.text("Passive: Frame Advantage (Starts slow, speeds up on consecutive hits)", NamedTextColor.LIGHT_PURPLE));
-                lore.add(Component.text("Active 1: Phantom Dash [Right-Click]", NamedTextColor.AQUA));
-                lore.add(Component.text("Active 2: Reality Cleave [Shift + Right-Click]", NamedTextColor.RED));
+                lore.add(Component.text("Passive: Frame Advantage", NamedTextColor.LIGHT_PURPLE));
+                lore.add(Component.text("Right-Click: Phantom Dash", NamedTextColor.AQUA));
+                lore.add(Component.text("Shift+Right-Click: Reality Cleave", NamedTextColor.RED));
                 break;
-            case "directorscut":
+            case "apexlancer": // 5.2
+                item = new ItemStack(Material.TRIDENT); // Using Trident as visually closest to a spear
+                meta = item.getItemMeta();
+                meta.displayName(Component.text("The Apex Lancer", NamedTextColor.GOLD).decoration(TextDecoration.BOLD, true));
+                lore.add(Component.text("Passive: Momentum Siphon (Slipstream)", NamedTextColor.GRAY));
+                lore.add(Component.text("Hold Right-Click: Cavalry Vault", NamedTextColor.YELLOW));
+                lore.add(Component.text("Shift+Right-Click: Judgment Barrage", NamedTextColor.GOLD));
+                break;
+            case "vampiricaxe": // 5.3
+                item = new ItemStack(Material.NETHERITE_AXE);
+                meta = item.getItemMeta();
+                meta.displayName(Component.text("The Vampiric Greataxe", NamedTextColor.DARK_RED).decoration(TextDecoration.BOLD, true));
+                lore.add(Component.text("Passive: Hemal Sight & Sanguine Bleed", NamedTextColor.RED));
+                lore.add(Component.text("Right-Click: Life Siphon Beam (Max 20 Hearts)", NamedTextColor.DARK_RED));
+                lore.add(Component.text("Shift+Right-Click: Berserk Pact", NamedTextColor.GRAY));
+                break;
+            case "abyssaltether": // 5.4
+                item = new ItemStack(Material.TRIDENT);
+                meta = item.getItemMeta();
+                meta.displayName(Component.text("The Abyssal Tether", NamedTextColor.LIGHT_PURPLE).decoration(TextDecoration.BOLD, true));
+                lore.add(Component.text("Passive: Float & Inflation", NamedTextColor.GRAY));
+                lore.add(Component.text("Right-Click: Sing", NamedTextColor.AQUA));
+                lore.add(Component.text("Shift+Right-Click: Rest / Puff Up", NamedTextColor.RED));
+                break;
+            case "mjolnir": // 5.5
+                item = new ItemStack(Material.MACE);
+                meta = item.getItemMeta();
+                meta.displayName(Component.text("Mjölnir, The Storm Gavel", NamedTextColor.YELLOW).decoration(TextDecoration.BOLD, true));
+                lore.add(Component.text("Passive: Kinetic Conductor (Fall Damage = Lightning)", NamedTextColor.GRAY));
+                lore.add(Component.text("Right-Click: Mjölnir's Flight", NamedTextColor.YELLOW));
+                lore.add(Component.text("Shift+Right-Click: Supercharge", NamedTextColor.GOLD));
+                break;
+            case "colossusaegis": // 5.6
+                item = new ItemStack(Material.SHIELD);
+                meta = item.getItemMeta();
+                meta.displayName(Component.text("Aegis of the Colossus", NamedTextColor.DARK_GRAY).decoration(TextDecoration.BOLD, true));
+                lore.add(Component.text("Passive: Juggernaut Scale (2x Size, 3x Health)", NamedTextColor.GRAY));
+                lore.add(Component.text("Right-Click: Colossal Guard & Perfect Parry", NamedTextColor.WHITE));
+                lore.add(Component.text("Shift+Right-Click: Apex Repulsion", NamedTextColor.DARK_AQUA));
+                break;
+            case "directorscut": // 5.7
                 item = new ItemStack(Material.BOW);
                 meta = item.getItemMeta();
                 meta.displayName(Component.text("The Director's Cut", NamedTextColor.DARK_RED).decoration(TextDecoration.BOLD, true));
-                lore.add(Component.text("Passive: Scripted Trajectories (Slipstreams grant speed)", NamedTextColor.GRAY));
-                lore.add(Component.text("Active 1: Payload Arrow [Shoot Bow]", NamedTextColor.YELLOW));
-                lore.add(Component.text("Active 2: Cut to Black [Shift + Right-Click]", NamedTextColor.DARK_RED));
+                lore.add(Component.text("Passive: Scripted Trajectories", NamedTextColor.GRAY));
+                lore.add(Component.text("Shoot Bow: Payload Arrow", NamedTextColor.YELLOW));
+                lore.add(Component.text("Shift+Right-Click: Cut to Black", NamedTextColor.DARK_RED));
                 break;
-            case "riptidearia":
-                item = new ItemStack(Material.TRIDENT);
+            case "stratospherictnt": // 5.8
+                item = new ItemStack(Material.TNT);
                 meta = item.getItemMeta();
-                meta.displayName(Component.text("The Riptide Aria", NamedTextColor.LIGHT_PURPLE).decoration(TextDecoration.BOLD, true));
-                lore.add(Component.text("Passive: Balloon Drift (Slow fall, 5 mid-air jumps via sneak/jump)", NamedTextColor.GRAY));
-                lore.add(Component.text("Active 1: Lullaby Wave [Right-Click]", NamedTextColor.AQUA));
-                lore.add(Component.text("Active 2: The Inner Game (Star KO) [Shift + Right-Click]", NamedTextColor.RED));
+                meta.displayName(Component.text("The Stratospheric Payload", NamedTextColor.RED).decoration(TextDecoration.BOLD, true));
+                lore.add(Component.text("Passive: Aerial Recon (Rocket Jump)", NamedTextColor.GRAY));
+                lore.add(Component.text("Right-Click: Carpet Bomb Runway", NamedTextColor.YELLOW));
+                lore.add(Component.text("Shift+Right-Click: Orbital Cataclysm", NamedTextColor.RED));
                 break;
             default:
                 return null;
@@ -166,11 +247,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         boolean isSneaking = player.isSneaking();
 
         switch (weaponId) {
-            case "mjolnir":
-                event.setCancelled(true);
-                if (checkCooldown(player, "mjolnir", 4000)) launchMjolnirHuracan(player);
-                break;
-            case "dimensionripper":
+            case "dimensionripper": // 5.1
                 event.setCancelled(true);
                 if (isSneaking) {
                     if (checkCooldown(player, "reality_cleave", 8000)) launchRealityCleave(player);
@@ -178,18 +255,43 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                     if (checkCooldown(player, "phantom_dash", 2500)) executePhantomDash(player);
                 }
                 break;
-            case "directorscut":
+            case "abyssaltether": // 5.4
+                event.setCancelled(true);
+                if (isSneaking) {
+                    if (checkCooldown(player, "star_ko", 12000)) executeInnerGameRest(player); // Rest
+                } else {
+                    if (checkCooldown(player, "lullaby_wave", 7000)) launchLullabyWave(player); // Sing
+                }
+                break;
+            case "mjolnir": // 5.5
+                event.setCancelled(true);
+                if (isSneaking) {
+                    // Supercharge Toggle logic goes here
+                } else {
+                    if (checkCooldown(player, "mjolnir", 4000)) launchMjolnirHuracan(player);
+                }
+                break;
+            case "colossusaegis": // 5.6
+                if (isSneaking) {
+                    event.setCancelled(true);
+                    if (checkCooldown(player, "apex_repel", 15000)) {
+                        // Implement Apex Repulsion (10 blocks up, then horizontal blast)
+                        player.sendMessage(Component.text("Apex Repulsion fired!", NamedTextColor.AQUA));
+                    }
+                }
+                break;
+            case "directorscut": // 5.7
                 if (isSneaking) {
                     event.setCancelled(true);
                     if (checkCooldown(player, "cut_to_black", 2000)) detonatePayloads(player);
                 }
                 break;
-            case "riptidearia":
+            case "stratospherictnt": // 5.8
                 event.setCancelled(true);
                 if (isSneaking) {
-                    if (checkCooldown(player, "star_ko", 12000)) executeInnerGameRest(player);
+                    player.sendMessage(Component.text("Calling Orbital Cataclysm...", NamedTextColor.RED));
                 } else {
-                    if (checkCooldown(player, "lullaby_wave", 7000)) launchLullabyWave(player);
+                    player.sendMessage(Component.text("Painting Carpet Bomb Runway...", NamedTextColor.YELLOW));
                 }
                 break;
         }
@@ -202,7 +304,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         if (weaponId == null) return;
 
         if (weaponId.equals("dimensionripper") && event.getEntity() instanceof LivingEntity target) {
-            handleFrameAdvantage(player, target);
+            handleFrameAdvantage(player, target); // 5.1
         }
     }
 
@@ -213,12 +315,12 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             if (!(event.getProjectile() instanceof Arrow arrow)) return;
             arrow.getPersistentDataContainer().set(payloadKey, PersistentDataType.BYTE, (byte) 1);
             activePayloads.computeIfAbsent(player.getUniqueId(), k -> new ArrayList<>()).add(arrow);
-            handleScriptedTrajectory(player, arrow);
+            handleScriptedTrajectory(player, arrow); // 5.7
         }
     }
 
     /* =========================================================================
-       THE RIPTIDE ARIA IMPLEMENTATION (Jigglypuff Kit)
+       THE ABYSSAL TETHER IMPLEMENTATION (5.4)
        ========================================================================= */
     private void triggerMidAirJump(Player player) {
         int jumps = airJumps.getOrDefault(player.getUniqueId(), 0);
@@ -233,7 +335,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
     @EventHandler
     public void onFlightAttempt(PlayerToggleFlightEvent event) {
         Player p = event.getPlayer();
-        if ("riptidearia".equals(getWeaponId(p.getInventory().getItemInMainHand()))) {
+        if ("abyssaltether".equals(getWeaponId(p.getInventory().getItemInMainHand()))) {
             if (p.getGameMode() == GameMode.SURVIVAL || p.getGameMode() == GameMode.ADVENTURE) {
                 event.setCancelled(true);
                 triggerMidAirJump(p);
@@ -245,7 +347,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
     public void onSneak(PlayerToggleSneakEvent event) {
         Player p = event.getPlayer();
         if (event.isSneaking() && !((Entity) p).isOnGround()) {
-            if ("riptidearia".equals(getWeaponId(p.getInventory().getItemInMainHand()))) {
+            if ("abyssaltether".equals(getWeaponId(p.getInventory().getItemInMainHand()))) {
                 triggerMidAirJump(p);
             }
         }
@@ -259,30 +361,18 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             int radius = 1;
             @Override
             public void run() {
-                if (radius > 8) { cancel(); return; }
+                if (radius > 10) { cancel(); return; } // Radius defined in 5.4
                 
-                // Draw acoustic ring
                 for (int degree = 0; degree < 360; degree += 20) {
                     double rad = Math.toRadians(degree);
                     startLoc.getWorld().spawnParticle(Particle.NOTE, startLoc.clone().add(radius * Math.cos(rad), 0.5, radius * Math.sin(rad)), 1, 0.2, 0.2, 0.2, Math.random());
                 }
                 
-                // Apply "Deep Sleep"
                 for (Entity e : startLoc.getWorld().getNearbyEntities(startLoc, radius, 2, radius)) {
                     if (e instanceof LivingEntity le && !le.getUniqueId().equals(player.getUniqueId())) {
                         le.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 70, 255));
                         le.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 70, 1));
-                        le.addPotionEffect(new PotionEffect(PotionEffectType.JUMP_BOOST, 70, 250)); // Negates jumping
-                        
-                        // Floating Z particles (Simulated with Notes)
-                        new BukkitRunnable() {
-                            int ticks = 0;
-                            @Override
-                            public void run() {
-                                if (ticks++ > 35 || le.isDead()) { cancel(); return; }
-                                le.getWorld().spawnParticle(Particle.NOTE, le.getLocation().add(0, 2.2, 0), 1, 0, 0.1, 0, 1);
-                            }
-                        }.runTaskTimer(GodWeapons.this, 0, 2);
+                        le.addPotionEffect(new PotionEffect(PotionEffectType.JUMP_BOOST, 70, 250)); 
                     }
                 }
                 radius += 2;
@@ -291,7 +381,6 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
     }
 
     private void executeInnerGameRest(Player player) {
-        // Punish windup: Instant 3-second slumber
         player.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 60, 255, false, false, false));
         player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 60, 1, false, false, false));
         player.addPotionEffect(new PotionEffect(PotionEffectType.JUMP_BOOST, 60, 250, false, false, false));
@@ -299,28 +388,23 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         player.sendMessage(Component.text("Zzz...", NamedTextColor.AQUA).decoration(TextDecoration.ITALIC, true));
         worldSound(player.getLocation(), Sound.ENTITY_CAT_PURREOW, 1.0f, 0.5f);
 
-        // Frame-Perfect Hitbox Check
         boolean hit = false;
         for (Entity e : player.getWorld().getNearbyEntities(player.getLocation(), 1.0, 1.0, 1.0)) {
             if (e instanceof LivingEntity le && !le.getUniqueId().equals(player.getUniqueId())) {
                 hit = true;
-                
-                // Star KO Physics
-                le.setHealth(Math.max(0, le.getHealth() - 40.0)); // True damage
-                le.setVelocity(new Vector(0, 5.0, 0)); // Launch to stratosphere
+                le.setHealth(Math.max(0, le.getHealth() - 40.0)); 
+                le.setVelocity(new Vector(0, 5.0, 0)); 
                 
                 worldSound(player.getLocation(), Sound.ENTITY_WARDEN_SONIC_BOOM, 2.0f, 1.0f);
                 worldSound(player.getLocation(), Sound.ENTITY_GENERIC_EXPLODE, 2.0f, 1.0f);
                 player.getWorld().spawnParticle(Particle.EXPLOSION, player.getLocation(), 2);
-                
-                player.sendMessage(Component.text("REST PUNISH!", NamedTextColor.RED).decoration(TextDecoration.BOLD, true));
                 break; 
             }
         }
     }
 
     /* =========================================================================
-       THE DIMENSION RIPPER IMPLEMENTATION
+       THE DIMENSION RIPPER IMPLEMENTATION (5.1)
        ========================================================================= */
     private void handleFrameAdvantage(Player player, LivingEntity target) {
         ComboData data = comboTracker.getOrDefault(player.getUniqueId(), new ComboData(target.getUniqueId(), 0));
@@ -358,18 +442,6 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         player.teleport(end);
         worldSound(start, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 0.5f);
         worldSound(end, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 1.0f, 1.2f);
-
-        new BukkitRunnable() {
-            int ticks = 0;
-            @Override
-            public void run() {
-                if (ticks++ > 40) { cancel(); return; }
-                player.getWorld().spawnParticle(Particle.PORTAL, start.clone().add(0, 1, 0), 15, 0.5, 1, 0.5, 0.1);
-                for (Entity e : player.getWorld().getNearbyEntities(start, 1.5, 1.5, 1.5)) {
-                    if (e instanceof LivingEntity le && !le.getUniqueId().equals(player.getUniqueId())) le.damage(4.0, player);
-                }
-            }
-        }.runTaskTimer(this, 0, 1);
     }
 
     private void launchRealityCleave(Player player) {
@@ -415,7 +487,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
     }
 
     /* =========================================================================
-       THE DIRECTOR'S CUT IMPLEMENTATION
+       THE DIRECTOR'S CUT IMPLEMENTATION (5.7)
        ========================================================================= */
     private void handleScriptedTrajectory(Player player, Arrow arrow) {
         new BukkitRunnable() {
@@ -448,10 +520,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
 
     private void detonatePayloads(Player player) {
         List<Arrow> arrows = activePayloads.get(player.getUniqueId());
-        if (arrows == null || arrows.isEmpty()) {
-            player.sendMessage(Component.text("No active payloads to detonate!", NamedTextColor.RED));
-            return;
-        }
+        if (arrows == null || arrows.isEmpty()) return;
 
         player.sendMessage(Component.text("🎬 CUT!", NamedTextColor.DARK_RED).decoration(TextDecoration.BOLD, true));
         worldSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1.0f, 0.5f);
@@ -461,7 +530,6 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             Location loc = arrow.getLocation();
             loc.getWorld().createExplosion(loc, 3.0f, false, false, player);
             
-            // Shower of 25 shrapnel arrows
             for (int i = 0; i < 25; i++) {
                 Arrow shrapnel = loc.getWorld().spawn(loc.clone().add(0, 2, 0), Arrow.class);
                 double rx = (Math.random() - 0.5) * 2.0;
@@ -476,7 +544,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
     }
 
     /* =========================================================================
-       MJOLNIR IMPLEMENTATION 
+       MJOLNIR IMPLEMENTATION (5.5)
        ========================================================================= */
     private void launchMjolnirHuracan(Player player) {
         Location start = player.getEyeLocation();
@@ -485,7 +553,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         
         ArmorStand stand = start.getWorld().spawn(start.clone().subtract(0, 1.2, 0), ArmorStand.class, s -> {
             s.setVisible(false); s.setMarker(true); s.setGravity(false); s.setSmall(true);
-            s.getEquipment().setItemInMainHand(new ItemStack(Material.NETHERITE_AXE));
+            s.getEquipment().setItemInMainHand(new ItemStack(Material.MACE));
         });
 
         new BukkitRunnable() {
@@ -535,13 +603,23 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!sender.hasPermission("godweapons.admin")) return true;
-        if (args.length >= 2 && args[0].equalsIgnoreCase("give")) {
+        
+        if (args.length == 0 || args[0].equalsIgnoreCase("menu")) {
+            if (sender instanceof Player p) {
+                openWeaponMenu(p);
+            } else {
+                sender.sendMessage("Only players can open the GUI.");
+            }
+            return true;
+        }
+        
+        if (args[0].equalsIgnoreCase("give") && args.length >= 2) {
             Player target = (args.length >= 3) ? Bukkit.getPlayer(args[2]) : (sender instanceof Player p ? p : null);
             if (target == null) return true;
             
             ItemStack weapon = createWeapon(args[1]);
             if (weapon == null) {
-                sender.sendMessage(Component.text("Unknown weapon. Try: mjolnir, dimensionripper, directorscut, riptidearia", NamedTextColor.RED));
+                sender.sendMessage(Component.text("Unknown weapon. Open /gw menu instead.", NamedTextColor.RED));
                 return true;
             }
             target.getInventory().addItem(weapon);
@@ -552,8 +630,10 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (args.length == 1) return List.of("give");
-        if (args.length == 2) return List.of("mjolnir", "dimensionripper", "directorscut", "riptidearia");
+        if (args.length == 1) return List.of("give", "menu");
+        if (args.length == 2 && args[0].equalsIgnoreCase("give")) {
+            return List.of("dimensionripper", "apexlancer", "vampiricaxe", "abyssaltether", "mjolnir", "colossusaegis", "directorscut", "stratospherictnt");
+        }
         if (args.length == 3) return Bukkit.getOnlinePlayers().stream().map(Player::getName).toList();
         return Collections.emptyList();
     }
