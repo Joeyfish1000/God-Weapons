@@ -64,7 +64,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             getCommand("godweapons").setTabCompleter(this);
         }
         startPassiveTracker();
-        getLogger().info("⚡ God Weapons V6 online! Physics tuned, meters activated.");
+        getLogger().info("⚡ God Weapons V7 online! Axe vision-tracking and 5x TNT payloads loaded.");
     }
 
     /* =========================================================================
@@ -289,8 +289,9 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
 
             case "abyssaltether":
                 event.setCancelled(true);
-                if (isSneaking) { if (checkCooldown(player, "star_ko", 12000)) executeInnerGameRest(player); } 
-                else { if (checkCooldown(player, "lullaby_wave", 7000)) launchLullabyWave(player); }
+                // Longer cooldowns applied here
+                if (isSneaking) { if (checkCooldown(player, "star_ko", 25000)) executeInnerGameRest(player); } 
+                else { if (checkCooldown(player, "lullaby_wave", 15000)) launchLullabyWave(player); }
                 break;
                 
             case "mjolnir":
@@ -319,9 +320,9 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             case "stratospherictnt":
                 event.setCancelled(true);
                 if (isSneaking) {
-                    if (checkCooldown(player, "orbital_cataclysm", 25000)) launchOrbitalCataclysm(player);
+                    if (checkCooldown(player, "orbital_cataclysm", 60000)) launchOrbitalCataclysm(player);
                 } else {
-                    if (checkCooldown(player, "carpet_bomb", 15000)) launchCarpetBomb(player);
+                    if (checkCooldown(player, "carpet_bomb", 45000)) launchCarpetBomb(player);
                 }
                 break;
         }
@@ -355,11 +356,9 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         if (weaponId.equals("mjolnir")) {
             int charge = mjolnirCharge.getOrDefault(player.getUniqueId(), 0);
             if (charge > 0) {
-                // Scale damage based on charge (up to +10 extra damage)
                 event.setDamage(event.getDamage() + (charge * 0.10));
                 player.getWorld().strikeLightningEffect(target.getLocation());
                 
-                // Deplete charge upon use
                 charge -= 15;
                 if (charge <= 0) {
                     charge = 0;
@@ -419,6 +418,20 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             int ticks = 0;
             @Override
             public void run() {
+                // Check distance
+                if (target.isDead() || player.getLocation().distance(target.getLocation()) > 15.0) {
+                    player.sendMessage(Component.text("Siphon broken - Target escaped!", NamedTextColor.GRAY));
+                    cancel(); return;
+                }
+                
+                // Check if player is still looking at the target (Dot Product calculation)
+                Vector pDir = player.getEyeLocation().getDirection().normalize();
+                Vector tDir = target.getEyeLocation().toVector().subtract(player.getEyeLocation().toVector()).normalize();
+                if (pDir.dot(tDir) < 0.85) { // Roughly 30 degrees tolerance
+                    player.sendMessage(Component.text("Siphon broken - You looked away!", NamedTextColor.GRAY));
+                    cancel(); return;
+                }
+
                 if (ticks++ >= 60) {
                     target.damage(6.0, player);
                     AttributeInstance maxHp = player.getAttribute(Attribute.GENERIC_MAX_HEALTH);
@@ -429,10 +442,8 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                     worldSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1.0f, 0.5f);
                     cancel(); return;
                 }
-                if (target.isDead() || player.getLocation().distance(target.getLocation()) > 15.0) {
-                    player.sendMessage(Component.text("Siphon broken!", NamedTextColor.GRAY));
-                    cancel(); return;
-                }
+
+                // Draw Beam
                 Location pLoc = player.getEyeLocation();
                 Location tLoc = target.getLocation().add(0, 1, 0);
                 Vector dir = tLoc.toVector().subtract(pLoc.toVector());
@@ -453,11 +464,8 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             return;
         }
         maxHp.setBaseValue(maxHp.getBaseValue() - 2.0);
-        
-        // Amplifier '1' equals Level II in Minecraft
         player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 200, 1, false, false, true));
         player.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 200, 1, false, false, true));
-        
         worldSound(player.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 1.0f, 1.5f);
         player.getWorld().spawnParticle(Particle.LAVA, player.getLocation(), 30, 0.5, 1, 0.5, 0.1);
         player.sendMessage(Component.text("BLOOD PACT SEALED (Speed II, Strength II)!", NamedTextColor.DARK_RED).decoration(TextDecoration.BOLD, true));
@@ -518,15 +526,13 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             int ticks = 0;
             @Override
             public void run() {
-                if (ticks++ >= 60) { // Takes 3 seconds to fully charge
+                if (ticks++ >= 60) {
                     mjolnirCharge.put(player.getUniqueId(), 100);
                     player.removePotionEffect(PotionEffectType.SLOWNESS);
                     worldSound(player.getLocation(), Sound.ENTITY_LIGHTNING_BOLT_IMPACT, 1.0f, 1.5f);
                     player.sendMessage(Component.text("OVERCHARGED!", NamedTextColor.GOLD).decoration(TextDecoration.BOLD, true));
                     cancel(); return;
                 }
-                
-                // Cinematic lightning striking around the player during windup
                 if (ticks % 10 == 0) {
                     Location strike = player.getLocation().add((Math.random() - 0.5) * 6, 0, (Math.random() - 0.5) * 6);
                     player.getWorld().strikeLightningEffect(strike);
@@ -552,12 +558,11 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             s.getEquipment().setItemInMainHand(originalMace);
         });
         
-        // Grab meter for damage scaling
         int charge = mjolnirCharge.getOrDefault(player.getUniqueId(), 0);
         final double baseDamage = 8.0 + (charge * 0.10);
         
         if (charge > 0) {
-            charge -= 25; // Throw heavily depletes charge
+            charge -= 25;
             if (charge < 0) charge = 0;
             mjolnirCharge.put(player.getUniqueId(), charge);
         }
@@ -579,7 +584,10 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                 current.getWorld().spawnParticle(Particle.ELECTRIC_SPARK, current, 8, 0.3, 0.3, 0.3, 0.05);
                 
                 for (Entity e : current.getWorld().getNearbyEntities(current, 1.5, 1.5, 1.5)) {
-                    if (e instanceof LivingEntity le && !le.equals(player)) le.damage(baseDamage, player);
+                    if (e instanceof LivingEntity le && !le.equals(player)) {
+                        le.damage(baseDamage, player);
+                        le.getWorld().strikeLightningEffect(le.getLocation()); // Lightning on throw impact
+                    }
                 }
             }
         }.runTaskTimer(this, 0, 1);
@@ -603,22 +611,21 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             
             worldSound(hitLoc, Sound.ENTITY_FIREWORK_ROCKET_LARGE_BLAST, 2.0f, 0.5f);
             Vector dir = sb.getVelocity().normalize().setY(0);
-            Vector right = dir.clone().crossProduct(new Vector(0, 1, 0)).normalize().multiply(2.0); // 2-block spacing
+            Vector right = dir.clone().crossProduct(new Vector(0, 1, 0)).normalize().multiply(2.0);
             
             new BukkitRunnable() {
                 int drops = 0;
                 @Override
                 public void run() {
-                    if (drops++ >= 8) { cancel(); return; }
+                    if (drops++ >= 24) { cancel(); return; } // Tripled from 8 to 24 drops
                     
                     Location centerDrop = hitLoc.clone().add(dir.clone().multiply(drops * 3));
-                    centerDrop.setY(hitLoc.getY() + 60); // Drops from 60 blocks above ground
+                    centerDrop.setY(hitLoc.getY() + 60);
                     
-                    // Spawn a layer (3 wide)
                     for (int i = -1; i <= 1; i++) {
                         Location exactDrop = centerDrop.clone().add(right.clone().multiply(i));
                         TNTPrimed tnt = hitLoc.getWorld().spawn(exactDrop, TNTPrimed.class);
-                        tnt.setFuseTicks(80); // Ensure it survives the fall to the ground
+                        tnt.setFuseTicks(80);
                     }
                 }
             }.runTaskTimer(this, 0, 5);
@@ -633,8 +640,9 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         player.sendMessage(Component.text("ORBITAL CATACLYSM INBOUND.", NamedTextColor.DARK_RED).decoration(TextDecoration.BOLD, true));
         worldSound(player.getLocation(), Sound.ENTITY_WITHER_SPAWN, 1.0f, 0.5f);
 
-        int[] ringCounts = {18, 12, 6, 1};
-        double[] ringRadii = {9.0, 6.0, 3.0, 0.0};
+        // Quintupled payload density: 90, 60, 30, 5
+        int[] ringCounts = {90, 60, 30, 5};
+        double[] ringRadii = {12.0, 8.0, 4.0, 0.0};
         
         for (int i = 0; i < 4; i++) {
             int count = ringCounts[i];
@@ -645,7 +653,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                 double x = Math.cos(angle) * radius;
                 double z = Math.sin(angle) * radius;
                 
-                Location spawn = target.clone().add(x, 60, z); // 60 blocks above target
+                Location spawn = target.clone().add(x, 60, z);
                 
                 TNTPrimed tnt = target.getWorld().spawn(spawn, TNTPrimed.class);
                 tnt.setFuseTicks(80);
@@ -698,8 +706,9 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
 
     private void executePhantomDash(Player p) { 
         Location s = p.getLocation(); Vector d = s.getDirection().normalize();
-        RayTraceResult r = p.getWorld().rayTraceBlocks(s.clone().add(0, 1, 0), d, 6.0, FluidCollisionMode.NEVER, true);
-        double dist = (r != null && r.getHitBlock() != null) ? s.distance(r.getHitPosition().toLocation(p.getWorld())) - 0.5 : 6.0;
+        // Nerfed dash distance from 6.0 to 3.5
+        RayTraceResult r = p.getWorld().rayTraceBlocks(s.clone().add(0, 1, 0), d, 3.5, FluidCollisionMode.NEVER, true);
+        double dist = (r != null && r.getHitBlock() != null) ? s.distance(r.getHitPosition().toLocation(p.getWorld())) - 0.5 : 3.5;
         Location e = s.clone().add(d.multiply(dist)); e.setYaw(s.getYaw()); e.setPitch(s.getPitch());
         p.teleport(e); worldSound(s, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 0.5f); worldSound(e, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 1.0f, 1.2f);
         
