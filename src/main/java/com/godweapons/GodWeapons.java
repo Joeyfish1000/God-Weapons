@@ -64,7 +64,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             getCommand("godweapons").setTabCompleter(this);
         }
         startPassiveTracker();
-        getLogger().info("⚡ God Weapons V5 online! Full arsenal locked and loaded.");
+        getLogger().info("⚡ God Weapons V5 online! 1.21 Engine checks passed.");
     }
 
     /* =========================================================================
@@ -340,7 +340,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             player.setVelocity(new Vector(0, launchPower, 0));
             event.setDamage(event.getDamage() * (player.isSprinting() ? 3.0 : 1.5));
             worldSound(player.getLocation(), Sound.ENTITY_GENERIC_EXPLODE, 1.5f, 1.0f);
-            player.getWorld().spawnParticle(Particle.EXPLOSION_LARGE, player.getLocation(), 1);
+            player.getWorld().spawnParticle(Particle.EXPLOSION, player.getLocation(), 1);
         }
 
         if (weaponId.equals("vampiricaxe")) {
@@ -377,7 +377,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             public void run() {
                 if (ticks++ > 6 || target.isDead()) { cancel(); return; }
                 target.damage(1.0);
-                target.getWorld().spawnParticle(Particle.REDSTONE, target.getLocation().add(0, 1, 0), 10, 0.3, 0.3, 0.3, new Particle.DustOptions(Color.RED, 1.5f));
+                target.getWorld().spawnParticle(Particle.DUST, target.getLocation().add(0, 1, 0), 10, 0.3, 0.3, 0.3, new Particle.DustOptions(Color.RED, 1.5f));
                 wielder.setHealth(Math.min(wielder.getHealth() + 1.0, wielder.getAttribute(Attribute.GENERIC_MAX_HEALTH).getValue()));
             }
         }.runTaskTimer(this, 0, 10);
@@ -418,7 +418,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                 dir.normalize();
                 for (double d = 0; d < dist; d += 0.5) {
                     Location point = pLoc.clone().add(dir.clone().multiply(d));
-                    player.getWorld().spawnParticle(Particle.REDSTONE, point, 1, 0, 0, 0, new Particle.DustOptions(Color.MAROON, 1.2f));
+                    player.getWorld().spawnParticle(Particle.DUST, point, 1, 0, 0, 0, new Particle.DustOptions(Color.MAROON, 1.2f));
                 }
             }
         }.runTaskTimer(this, 0, 1);
@@ -432,7 +432,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         }
         maxHp.setBaseValue(maxHp.getBaseValue() - 2.0);
         player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 200, 1, false, false, true));
-        player.addPotionEffect(new PotionEffect(PotionEffectType.INCREASE_DAMAGE, 200, 1, false, false, true));
+        player.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 200, 1, false, false, true));
         worldSound(player.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 1.0f, 1.5f);
         player.getWorld().spawnParticle(Particle.LAVA, player.getLocation(), 30, 0.5, 1, 0.5, 0.1);
         player.sendMessage(Component.text("BLOOD PACT SEALED!", NamedTextColor.DARK_RED).decoration(TextDecoration.BOLD, true));
@@ -492,7 +492,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             player.removePotionEffect(PotionEffectType.SLOWNESS);
             player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 200, 2, false, false, true));
             player.addPotionEffect(new PotionEffect(PotionEffectType.HASTE, 200, 2, false, false, true));
-            player.addPotionEffect(new PotionEffect(PotionEffectType.INCREASE_DAMAGE, 200, 1, false, false, true));
+            player.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 200, 1, false, false, true));
             worldSound(player.getLocation(), Sound.ENTITY_LIGHTNING_BOLT_IMPACT, 1.0f, 1.5f);
             player.sendMessage(Component.text("OVERCHARGED!", NamedTextColor.GOLD).decoration(TextDecoration.BOLD, true));
             new BukkitRunnable() { @Override public void run() { mjolnirCharge.put(player.getUniqueId(), 0); } }.runTaskLater(this, 200);
@@ -568,7 +568,10 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                     
                     TNTPrimed tnt = hitLoc.getWorld().spawn(dropLoc, TNTPrimed.class);
                     tnt.setFuseTicks(80);
-                    hitLoc.getWorld().spawnParticle(Particle.FLAME, dropLoc.clone().setY(hitLoc.getY() + 1), 20, 1, 0, 1, 0);
+                    
+                    Location pLoc = dropLoc.clone();
+                    pLoc.setY(hitLoc.getY() + 1);
+                    hitLoc.getWorld().spawnParticle(Particle.FLAME, pLoc, 20, 1, 0, 1, 0);
                 }
             }.runTaskTimer(this, 0, 5);
         }
@@ -859,13 +862,13 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                         
                         worldSound(player.getLocation(), Sound.ENTITY_WARDEN_SONIC_BOOM, 2.0f, 1.0f);
                         worldSound(player.getLocation(), Sound.ENTITY_GENERIC_EXPLODE, 2.0f, 1.0f);
-                        player.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, player.getLocation(), 2);
+                        player.getWorld().spawnParticle(Particle.EXPLOSION, player.getLocation(), 2);
                         player.sendMessage(Component.text("REST PUNISH!", NamedTextColor.RED).decoration(TextDecoration.BOLD, true));
                         break; 
                     }
                 }
             }
-        }.runTaskLater(this, 20); // Hits exactly 1 second into the sleep
+        }.runTaskLater(this, 20); 
     }
 
     /* =========================================================================
