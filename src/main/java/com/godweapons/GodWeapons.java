@@ -64,7 +64,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             getCommand("godweapons").setTabCompleter(this);
         }
         startPassiveTracker();
-        getLogger().info("⚡ God Weapons V5 online! 1.21 Engine checks passed.");
+        getLogger().info("⚡ God Weapons V6 online! Physics tuned, meters activated.");
     }
 
     /* =========================================================================
@@ -100,8 +100,13 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                         p.addPotionEffect(new PotionEffect(PotionEffectType.WEAKNESS, 20, 0, false, false, false));
                     }
                     
-                    if ("mjolnir".equals(mainHandId) && mjolnirCharge.getOrDefault(p.getUniqueId(), 0) == 2) {
-                        p.getWorld().spawnParticle(Particle.ELECTRIC_SPARK, p.getLocation().add(0, 1, 0), 5, 0.5, 0.5, 0.5, 0.1);
+                    // Mjolnir active charge meter
+                    if ("mjolnir".equals(mainHandId)) {
+                        int charge = mjolnirCharge.getOrDefault(p.getUniqueId(), 0);
+                        if (charge > 0) {
+                            p.sendActionBar(Component.text("⚡ Mjölnir Charge: " + charge + "%", NamedTextColor.YELLOW).decoration(TextDecoration.BOLD, true));
+                            p.getWorld().spawnParticle(Particle.ELECTRIC_SPARK, p.getLocation().add(0, 1, 0), 2, 0.5, 0.5, 0.5, 0.1);
+                        }
                     }
                 }
             }
@@ -291,7 +296,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             case "mjolnir":
                 event.setCancelled(true);
                 if (isSneaking) {
-                    if (checkCooldown(player, "supercharge_toggle", 2000)) toggleSupercharge(player);
+                    if (checkCooldown(player, "supercharge_toggle", 25000)) toggleSupercharge(player);
                 } else {
                     if (checkCooldown(player, "mjolnir_throw", 5000)) launchMjolnirThrow(player, handItem);
                 }
@@ -345,6 +350,23 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
 
         if (weaponId.equals("vampiricaxe")) {
             if (player.getCooledAttackStrength(0) == 1.0f) applySanguineBleed(player, target);
+        }
+        
+        if (weaponId.equals("mjolnir")) {
+            int charge = mjolnirCharge.getOrDefault(player.getUniqueId(), 0);
+            if (charge > 0) {
+                // Scale damage based on charge (up to +10 extra damage)
+                event.setDamage(event.getDamage() + (charge * 0.10));
+                player.getWorld().strikeLightningEffect(target.getLocation());
+                
+                // Deplete charge upon use
+                charge -= 15;
+                if (charge <= 0) {
+                    charge = 0;
+                    player.sendMessage(Component.text("Mjölnir charge depleted.", NamedTextColor.RED));
+                }
+                mjolnirCharge.put(player.getUniqueId(), charge);
+            }
         }
     }
 
@@ -431,11 +453,14 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             return;
         }
         maxHp.setBaseValue(maxHp.getBaseValue() - 2.0);
+        
+        // Amplifier '1' equals Level II in Minecraft
         player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 200, 1, false, false, true));
         player.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 200, 1, false, false, true));
+        
         worldSound(player.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 1.0f, 1.5f);
         player.getWorld().spawnParticle(Particle.LAVA, player.getLocation(), 30, 0.5, 1, 0.5, 0.1);
-        player.sendMessage(Component.text("BLOOD PACT SEALED!", NamedTextColor.DARK_RED).decoration(TextDecoration.BOLD, true));
+        player.sendMessage(Component.text("BLOOD PACT SEALED (Speed II, Strength II)!", NamedTextColor.DARK_RED).decoration(TextDecoration.BOLD, true));
     }
 
     /* =========================================================================
@@ -481,22 +506,33 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
        MACE (5.5) - MJOLNIR
        ========================================================================= */
     private void toggleSupercharge(Player player) {
-        int state = mjolnirCharge.getOrDefault(player.getUniqueId(), 0);
-        if (state == 0) {
-            mjolnirCharge.put(player.getUniqueId(), 1);
-            player.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 20000, 255, false, false, false));
-            worldSound(player.getLocation(), Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 1.0f, 0.5f);
-            player.sendMessage(Component.text("Charging...", NamedTextColor.YELLOW));
-        } else if (state == 1) {
-            mjolnirCharge.put(player.getUniqueId(), 2);
-            player.removePotionEffect(PotionEffectType.SLOWNESS);
-            player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 200, 2, false, false, true));
-            player.addPotionEffect(new PotionEffect(PotionEffectType.HASTE, 200, 2, false, false, true));
-            player.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 200, 1, false, false, true));
-            worldSound(player.getLocation(), Sound.ENTITY_LIGHTNING_BOLT_IMPACT, 1.0f, 1.5f);
-            player.sendMessage(Component.text("OVERCHARGED!", NamedTextColor.GOLD).decoration(TextDecoration.BOLD, true));
-            new BukkitRunnable() { @Override public void run() { mjolnirCharge.put(player.getUniqueId(), 0); } }.runTaskLater(this, 200);
+        if (mjolnirCharge.getOrDefault(player.getUniqueId(), 0) > 0) {
+            player.sendMessage(Component.text("You are already charged!", NamedTextColor.RED));
+            return;
         }
+        
+        player.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 60, 255, false, false, false));
+        player.sendMessage(Component.text("Channeling storm...", NamedTextColor.YELLOW));
+        
+        new BukkitRunnable() {
+            int ticks = 0;
+            @Override
+            public void run() {
+                if (ticks++ >= 60) { // Takes 3 seconds to fully charge
+                    mjolnirCharge.put(player.getUniqueId(), 100);
+                    player.removePotionEffect(PotionEffectType.SLOWNESS);
+                    worldSound(player.getLocation(), Sound.ENTITY_LIGHTNING_BOLT_IMPACT, 1.0f, 1.5f);
+                    player.sendMessage(Component.text("OVERCHARGED!", NamedTextColor.GOLD).decoration(TextDecoration.BOLD, true));
+                    cancel(); return;
+                }
+                
+                // Cinematic lightning striking around the player during windup
+                if (ticks % 10 == 0) {
+                    Location strike = player.getLocation().add((Math.random() - 0.5) * 6, 0, (Math.random() - 0.5) * 6);
+                    player.getWorld().strikeLightningEffect(strike);
+                }
+            }
+        }.runTaskTimer(this, 0, 1);
     }
 
     private void launchMjolnirThrow(Player player, ItemStack originalMace) {
@@ -515,6 +551,16 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             s.setVisible(false); s.setMarker(true); s.setGravity(false); s.setSmall(true);
             s.getEquipment().setItemInMainHand(originalMace);
         });
+        
+        // Grab meter for damage scaling
+        int charge = mjolnirCharge.getOrDefault(player.getUniqueId(), 0);
+        final double baseDamage = 8.0 + (charge * 0.10);
+        
+        if (charge > 0) {
+            charge -= 25; // Throw heavily depletes charge
+            if (charge < 0) charge = 0;
+            mjolnirCharge.put(player.getUniqueId(), charge);
+        }
 
         new BukkitRunnable() {
             int ticks = 0;
@@ -533,7 +579,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                 current.getWorld().spawnParticle(Particle.ELECTRIC_SPARK, current, 8, 0.3, 0.3, 0.3, 0.05);
                 
                 for (Entity e : current.getWorld().getNearbyEntities(current, 1.5, 1.5, 1.5)) {
-                    if (e instanceof LivingEntity le && !le.equals(player)) le.damage(8.0, player);
+                    if (e instanceof LivingEntity le && !le.equals(player)) le.damage(baseDamage, player);
                 }
             }
         }.runTaskTimer(this, 0, 1);
@@ -546,7 +592,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         Snowball canister = player.launchProjectile(Snowball.class);
         canister.getPersistentDataContainer().set(carpetBombKey, PersistentDataType.BYTE, (byte) 1);
         worldSound(player.getLocation(), Sound.ENTITY_ENDER_PEARL_THROW, 1.0f, 0.5f);
-        player.sendMessage(Component.text("Runway canister out!", NamedTextColor.YELLOW));
+        player.sendMessage(Component.text("Painting Runway...", NamedTextColor.YELLOW));
     }
 
     @EventHandler
@@ -557,21 +603,23 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             
             worldSound(hitLoc, Sound.ENTITY_FIREWORK_ROCKET_LARGE_BLAST, 2.0f, 0.5f);
             Vector dir = sb.getVelocity().normalize().setY(0);
+            Vector right = dir.clone().crossProduct(new Vector(0, 1, 0)).normalize().multiply(2.0); // 2-block spacing
             
             new BukkitRunnable() {
                 int drops = 0;
                 @Override
                 public void run() {
                     if (drops++ >= 8) { cancel(); return; }
-                    Location dropLoc = hitLoc.clone().add(dir.clone().multiply(drops * 3));
-                    dropLoc.setY(hitLoc.getWorld().getMaxHeight());
                     
-                    TNTPrimed tnt = hitLoc.getWorld().spawn(dropLoc, TNTPrimed.class);
-                    tnt.setFuseTicks(80);
+                    Location centerDrop = hitLoc.clone().add(dir.clone().multiply(drops * 3));
+                    centerDrop.setY(hitLoc.getY() + 60); // Drops from 60 blocks above ground
                     
-                    Location pLoc = dropLoc.clone();
-                    pLoc.setY(hitLoc.getY() + 1);
-                    hitLoc.getWorld().spawnParticle(Particle.FLAME, pLoc, 20, 1, 0, 1, 0);
+                    // Spawn a layer (3 wide)
+                    for (int i = -1; i <= 1; i++) {
+                        Location exactDrop = centerDrop.clone().add(right.clone().multiply(i));
+                        TNTPrimed tnt = hitLoc.getWorld().spawn(exactDrop, TNTPrimed.class);
+                        tnt.setFuseTicks(80); // Ensure it survives the fall to the ground
+                    }
                 }
             }.runTaskTimer(this, 0, 5);
         }
@@ -597,11 +645,10 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                 double x = Math.cos(angle) * radius;
                 double z = Math.sin(angle) * radius;
                 
-                Location spawn = target.clone().add(x, 0, z);
-                spawn.setY(target.getWorld().getMaxHeight());
+                Location spawn = target.clone().add(x, 60, z); // 60 blocks above target
                 
                 TNTPrimed tnt = target.getWorld().spawn(spawn, TNTPrimed.class);
-                tnt.setFuseTicks(100);
+                tnt.setFuseTicks(80);
             }
         }
     }
