@@ -17,8 +17,10 @@ import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityShootBowEvent;
+import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.player.PlayerFishEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
@@ -42,11 +44,13 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
     private NamespacedKey weaponKey;
     private NamespacedKey payloadKey;
     private NamespacedKey carpetBombKey;
+    private NamespacedKey summonKey; // Prevents summoned entities from dropping items
 
     private final Map<UUID, Map<String, Long>> cooldowns = new HashMap<>();
     private final Map<UUID, ComboData> comboTracker = new HashMap<>();
     private final Map<UUID, List<Arrow>> activePayloads = new HashMap<>();
     private final Map<UUID, Integer> airJumps = new HashMap<>();
+    private final Map<UUID, List<Entity>> broodSpiders = new HashMap<>();
     
     // States
     private final Set<UUID> joustingStance = new HashSet<>();
@@ -57,6 +61,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         this.weaponKey = new NamespacedKey(this, "weapon_id");
         this.payloadKey = new NamespacedKey(this, "is_payload");
         this.carpetBombKey = new NamespacedKey(this, "carpet_bomb");
+        this.summonKey = new NamespacedKey(this, "is_summon");
 
         getServer().getPluginManager().registerEvents(this, this);
         if (getCommand("godweapons") != null) {
@@ -64,7 +69,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             getCommand("godweapons").setTabCompleter(this);
         }
         startPassiveTracker();
-        getLogger().info("⚡ God Weapons V7 online! Axe vision-tracking and 5x TNT payloads loaded.");
+        getLogger().info("⚡ God Weapons V8 online! Spindle and Clarion loaded. 10 Weapons active.");
     }
 
     /* =========================================================================
@@ -78,6 +83,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                     String mainHandId = getWeaponId(p.getInventory().getItemInMainHand());
                     String offHandId = getWeaponId(p.getInventory().getItemInOffHand());
                     
+                    // Dimension Ripper (5.1)
                     if ("dimensionripper".equals(mainHandId)) {
                         ComboData cd = comboTracker.get(p.getUniqueId());
                         if (cd == null || System.currentTimeMillis() - cd.lastHit > 3000) {
@@ -85,6 +91,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                         }
                     }
                     
+                    // Abyssal Tether (5.4)
                     if ("abyssaltether".equals(mainHandId)) {
                         if (p.getGameMode() == GameMode.SURVIVAL || p.getGameMode() == GameMode.ADVENTURE) p.setAllowFlight(true);
                         if (((Entity) p).isOnGround()) {
@@ -96,17 +103,40 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                         if (p.getAllowFlight()) p.setAllowFlight(false);
                     }
 
+                    // Aegis of the Colossus (5.6)
                     if ("colossusaegis".equals(mainHandId) || "colossusaegis".equals(offHandId)) {
                         p.addPotionEffect(new PotionEffect(PotionEffectType.WEAKNESS, 20, 0, false, false, false));
                     }
                     
-                    // Mjolnir active charge meter
+                    // Mjolnir (5.5)
                     if ("mjolnir".equals(mainHandId)) {
                         int charge = mjolnirCharge.getOrDefault(p.getUniqueId(), 0);
                         if (charge > 0) {
                             p.sendActionBar(Component.text("⚡ Mjölnir Charge: " + charge + "%", NamedTextColor.YELLOW).decoration(TextDecoration.BOLD, true));
                             p.getWorld().spawnParticle(Particle.ELECTRIC_SPARK, p.getLocation().add(0, 1, 0), 2, 0.5, 0.5, 0.5, 0.1);
                         }
+                    }
+
+                    // The Sun-Chaser's Clarion (5.10)
+                    AttributeInstance kb = p.getAttribute(Attribute.GENERIC_KNOCKBACK_RESISTANCE);
+                    if ("sunchaserclarion".equals(mainHandId) || "sunchaserclarion".equals(offHandId)) {
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 40, 1, false, false, false));
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.JUMP_BOOST, 40, 1, false, false, false));
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE, 40, 0, false, false, false));
+                        if (kb != null) kb.setBaseValue(1.0); // 100% Knockback immunity
+                    } else {
+                        if (kb != null && kb.getBaseValue() == 1.0) kb.setBaseValue(0.0);
+                    }
+
+                    // Arachne's Spindle (5.9) - Cobweb Immunity & Spiders
+                    if ("arachnespindle".equals(mainHandId) || "arachnespindle".equals(offHandId)) {
+                        if (p.getLocation().getBlock().getType() == Material.COBWEB || p.getEyeLocation().getBlock().getType() == Material.COBWEB) {
+                            p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 40, 2, false, false, false)); // Speed III
+                            p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 40, 0, false, false, false)); // Regen I
+                        }
+                        handleBroodSpiders(p, true);
+                    } else {
+                        handleBroodSpiders(p, false);
                     }
                 }
             }
@@ -117,7 +147,8 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
        GUI & WEAPON FACTORY
        ========================================================================= */
     private void openWeaponMenu(Player player) {
-        Inventory gui = Bukkit.createInventory(null, 27, Component.text("The God Weapons Arsenal", NamedTextColor.DARK_PURPLE).decoration(TextDecoration.BOLD, true));
+        Inventory gui = Bukkit.createInventory(null, 36, Component.text("The God Weapons Arsenal", NamedTextColor.DARK_PURPLE).decoration(TextDecoration.BOLD, true));
+        
         gui.setItem(10, createWeapon("dimensionripper"));
         gui.setItem(11, createWeapon("apexlancer"));
         gui.setItem(12, createWeapon("vampiricaxe"));
@@ -125,7 +156,9 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         gui.setItem(14, createWeapon("mjolnir"));
         gui.setItem(15, createWeapon("colossusaegis"));
         gui.setItem(16, createWeapon("directorscut"));
-        gui.setItem(22, createWeapon("stratospherictnt"));
+        gui.setItem(20, createWeapon("stratospherictnt"));
+        gui.setItem(22, createWeapon("arachnespindle"));
+        gui.setItem(24, createWeapon("sunchaserclarion"));
 
         ItemStack glass = new ItemStack(Material.BLACK_STAINED_GLASS_PANE);
         ItemMeta meta = glass.getItemMeta();
@@ -225,6 +258,22 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                 lore.add(Component.text("Right-Click: Carpet Bomb Runway", NamedTextColor.YELLOW));
                 lore.add(Component.text("Shift+Right-Click: Orbital Cataclysm", NamedTextColor.RED));
                 break;
+            case "arachnespindle": // 5.9
+                item = new ItemStack(Material.FISHING_ROD);
+                meta = item.getItemMeta();
+                meta.displayName(Component.text("Arachne's Spindle", NamedTextColor.DARK_GREEN).decoration(TextDecoration.BOLD, true));
+                lore.add(Component.text("Passive: Broodmother's Domain", NamedTextColor.GREEN));
+                lore.add(Component.text("Hook Block: Silk Zip", NamedTextColor.WHITE));
+                lore.add(Component.text("Hook Player: Venomous Snare", NamedTextColor.DARK_GREEN));
+                break;
+            case "sunchaserclarion": // 5.10
+                item = new ItemStack(Material.GOAT_HORN);
+                meta = item.getItemMeta();
+                meta.displayName(Component.text("The Sun-Chaser's Clarion", NamedTextColor.GOLD).decoration(TextDecoration.BOLD, true));
+                lore.add(Component.text("Passive: Unstoppable Momentum", NamedTextColor.YELLOW));
+                lore.add(Component.text("Right-Click: Wild Hunt", NamedTextColor.WHITE));
+                lore.add(Component.text("Shift+Right-Click: Solar Smite", NamedTextColor.GOLD));
+                break;
             default: return null;
         }
 
@@ -289,7 +338,6 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
 
             case "abyssaltether":
                 event.setCancelled(true);
-                // Longer cooldowns applied here
                 if (isSneaking) { if (checkCooldown(player, "star_ko", 25000)) executeInnerGameRest(player); } 
                 else { if (checkCooldown(player, "lullaby_wave", 15000)) launchLullabyWave(player); }
                 break;
@@ -323,6 +371,15 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                     if (checkCooldown(player, "orbital_cataclysm", 60000)) launchOrbitalCataclysm(player);
                 } else {
                     if (checkCooldown(player, "carpet_bomb", 45000)) launchCarpetBomb(player);
+                }
+                break;
+
+            case "sunchaserclarion":
+                event.setCancelled(true);
+                if (isSneaking) {
+                    if (checkCooldown(player, "solar_smite", 12000)) launchSolarSmite(player);
+                } else {
+                    if (checkCooldown(player, "wild_hunt", 20000)) executeWildHunt(player);
                 }
                 break;
         }
@@ -367,22 +424,189 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                 mjolnirCharge.put(player.getUniqueId(), charge);
             }
         }
+
+        if (weaponId.equals("arachnespindle")) {
+            if (Math.random() < 0.10) { // 10% chance
+                target.getLocation().getBlock().setType(Material.COBWEB);
+                worldSound(target.getLocation(), Sound.ENTITY_SPIDER_STEP, 1.0f, 1.0f);
+            }
+        }
     }
 
     @EventHandler
-    public void onFallDamage(EntityDamageEvent event) {
-        if (event.getCause() == EntityDamageEvent.DamageCause.FALL && event.getEntity() instanceof Player player) {
+    public void onDamage(EntityDamageEvent event) {
+        if (event.getEntity() instanceof Player player) {
             String mainHand = getWeaponId(player.getInventory().getItemInMainHand());
-            if ("apexlancer".equals(mainHand) || "mjolnir".equals(mainHand) || "stratospherictnt".equals(mainHand)) {
-                event.setCancelled(true);
-                if ("mjolnir".equals(mainHand)) {
-                    player.getWorld().strikeLightningEffect(player.getLocation());
-                    for (Entity e : player.getNearbyEntities(4, 4, 4)) {
-                        if (e instanceof LivingEntity le) le.damage(event.getDamage() * 1.5, player);
+            String offHand = getWeaponId(player.getInventory().getItemInOffHand());
+            
+            // Fall Damage Immunity
+            if (event.getCause() == EntityDamageEvent.DamageCause.FALL) {
+                if ("apexlancer".equals(mainHand) || "mjolnir".equals(mainHand) || "stratospherictnt".equals(mainHand)) {
+                    event.setCancelled(true);
+                    if ("mjolnir".equals(mainHand)) {
+                        player.getWorld().strikeLightningEffect(player.getLocation());
+                        for (Entity e : player.getNearbyEntities(4, 4, 4)) {
+                            if (e instanceof LivingEntity le) le.damage(event.getDamage() * 1.5, player);
+                        }
                     }
                 }
             }
+            
+            // Clarion Fire Immunity
+            if (event.getCause() == EntityDamageEvent.DamageCause.FIRE || event.getCause() == EntityDamageEvent.DamageCause.FIRE_TICK || event.getCause() == EntityDamageEvent.DamageCause.LAVA) {
+                if ("sunchaserclarion".equals(mainHand) || "sunchaserclarion".equals(offHand)) {
+                    event.setCancelled(true);
+                    player.setFireTicks(0);
+                }
+            }
         }
+        
+        // Prevent summoned wolves from dropping items or exp
+        if (event.getEntity().getPersistentDataContainer().has(summonKey, PersistentDataType.BYTE)) {
+            if (event.getEntity() instanceof LivingEntity le && (le.getHealth() - event.getFinalDamage() <= 0)) {
+                le.getWorld().spawnParticle(Particle.SOUL_FIRE_FLAME, le.getLocation().add(0, 0.5, 0), 20, 0.3, 0.3, 0.3, 0.1);
+                le.remove();
+                event.setCancelled(true);
+            }
+        }
+    }
+
+    @EventHandler
+    public void onTarget(EntityTargetEvent event) {
+        if (event.getEntity().getPersistentDataContainer().has(summonKey, PersistentDataType.BYTE) && event.getTarget() instanceof Player) {
+            if (event.getEntity() instanceof Tameable t && event.getTarget().equals(t.getOwner())) {
+                event.setCancelled(true);
+            }
+        }
+    }
+
+    /* =========================================================================
+       FISHING ROD (5.9) - ARACHNE'S SPINDLE
+       ========================================================================= */
+    @EventHandler
+    public void onFish(PlayerFishEvent event) {
+        Player player = event.getPlayer();
+        if (!"arachnespindle".equals(getWeaponId(player.getInventory().getItemInMainHand()))) return;
+
+        if (event.getState() == PlayerFishEvent.State.IN_GROUND) {
+            // Silk Zip (Active 1)
+            Location hookLoc = event.getHook().getLocation();
+            Vector zip = hookLoc.toVector().subtract(player.getLocation().toVector()).normalize().multiply(2.5);
+            player.setVelocity(zip);
+            worldSound(player.getLocation(), Sound.ENTITY_SPIDER_STEP, 1.5f, 0.5f);
+            player.getWorld().spawnParticle(Particle.CRIT, hookLoc, 15, 0.2, 0.2, 0.2, 0.5);
+        } else if (event.getState() == PlayerFishEvent.State.CAUGHT_ENTITY) {
+            // Venomous Snare (Active 2)
+            if (event.getCaught() instanceof LivingEntity target) {
+                target.addPotionEffect(new PotionEffect(PotionEffectType.POISON, 100, 1));
+                target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 100, 2));
+                worldSound(target.getLocation(), Sound.ENTITY_SPIDER_HURT, 1.5f, 0.5f);
+                target.getWorld().spawnParticle(Particle.DUST, target.getLocation().add(0, 1, 0), 20, 0.5, 0.5, 0.5, new Particle.DustOptions(Color.GREEN, 1.5f));
+            }
+        }
+    }
+
+    private void handleBroodSpiders(Player player, boolean holding) {
+        List<Entity> spiders = broodSpiders.getOrDefault(player.getUniqueId(), new ArrayList<>());
+        spiders.removeIf(e -> !e.isValid() || e.isDead());
+        
+        if (holding) {
+            if (spiders.size() < 3) {
+                CaveSpider spider = player.getWorld().spawn(player.getLocation(), CaveSpider.class);
+                spider.getPersistentDataContainer().set(summonKey, PersistentDataType.BYTE, (byte) 1);
+                // Tagging spider to not attack owner
+                spider.setTarget(null);
+                spiders.add(spider);
+            }
+            
+            // Make spiders actively hunt nearest non-player or enemies
+            for (Entity spider : spiders) {
+                if (spider instanceof CaveSpider cs) {
+                    if (cs.getTarget() == null || cs.getTarget().equals(player)) {
+                        for (Entity e : cs.getNearbyEntities(10, 5, 10)) {
+                            if (e instanceof LivingEntity le && !e.equals(player)) {
+                                cs.setTarget(le);
+                                break;
+                            }
+                        }
+                    }
+                    if (cs.getLocation().distance(player.getLocation()) > 15) {
+                        cs.teleport(player.getLocation()); // Teleport back if too far
+                    }
+                }
+            }
+        } else {
+            // Despawn if weapon is unequipped
+            for (Entity spider : spiders) {
+                spider.getWorld().spawnParticle(Particle.SMOKE, spider.getLocation(), 10, 0.2, 0.2, 0.2, 0.05);
+                spider.remove();
+            }
+            spiders.clear();
+        }
+        broodSpiders.put(player.getUniqueId(), spiders);
+    }
+
+    /* =========================================================================
+       HORN (5.10) - THE SUN-CHASER'S CLARION
+       ========================================================================= */
+    private void executeWildHunt(Player player) {
+        worldSound(player.getLocation(), Sound.ITEM_GOAT_HORN_SOUND_0, 2.0f, 1.0f);
+        player.getWorld().spawnParticle(Particle.SOUL_FIRE_FLAME, player.getLocation(), 40, 1, 1, 1, 0.1);
+        
+        List<Wolf> wolves = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            Wolf wolf = player.getWorld().spawn(player.getLocation(), Wolf.class);
+            wolf.setOwner(player);
+            wolf.setAngry(true);
+            wolf.getPersistentDataContainer().set(summonKey, PersistentDataType.BYTE, (byte) 1);
+            wolf.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 200, 2, false, false, false));
+            wolves.add(wolf);
+        }
+
+        // Auto-target nearest
+        for (Entity e : player.getNearbyEntities(20, 10, 20)) {
+            if (e instanceof LivingEntity le && !e.equals(player)) {
+                wolves.forEach(w -> w.setTarget(le));
+                break;
+            }
+        }
+
+        // Dissolve into Valhalla after 10s
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                wolves.forEach(w -> {
+                    if (w.isValid()) {
+                        w.getWorld().spawnParticle(Particle.SOUL_FIRE_FLAME, w.getLocation().add(0, 0.5, 0), 20, 0.3, 0.3, 0.3, 0.1);
+                        w.remove();
+                    }
+                });
+            }
+        }.runTaskLater(this, 200);
+    }
+
+    private void launchSolarSmite(Player player) {
+        worldSound(player.getLocation(), Sound.ITEM_GOAT_HORN_SOUND_2, 2.0f, 1.0f);
+        
+        RayTraceResult ray = player.getWorld().rayTraceBlocks(player.getEyeLocation(), player.getEyeLocation().getDirection(), 40.0, FluidCollisionMode.NEVER, true);
+        Location target = (ray != null && ray.getHitBlock() != null) ? ray.getHitBlock().getLocation().add(0.5, 1, 0.5) : player.getEyeLocation().add(player.getEyeLocation().getDirection().multiply(40));
+
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                worldSound(target, Sound.ENTITY_GENERIC_EXPLODE, 2.0f, 2.0f);
+                for (int y = 0; y < 40; y++) {
+                    target.getWorld().spawnParticle(Particle.END_ROD, target.clone().add(0, y, 0), 10, 0.5, 0.5, 0.5, 0);
+                    target.getWorld().spawnParticle(Particle.WAX_OFF, target.clone().add(0, y, 0), 5, 0.5, 0.5, 0.5, 0); // Holy light effect
+                }
+                for (Entity e : target.getWorld().getNearbyEntities(target, 3, 40, 3)) {
+                    if (e instanceof LivingEntity le && !le.equals(player)) {
+                        le.setHealth(Math.max(0, le.getHealth() - 25.0)); // Vaporize
+                        le.setFireTicks(100);
+                    }
+                }
+            }
+        }.runTaskLater(this, 15); // Short delay for dramatic impact
     }
 
     /* =========================================================================
@@ -418,16 +642,14 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
             int ticks = 0;
             @Override
             public void run() {
-                // Check distance
                 if (target.isDead() || player.getLocation().distance(target.getLocation()) > 15.0) {
                     player.sendMessage(Component.text("Siphon broken - Target escaped!", NamedTextColor.GRAY));
                     cancel(); return;
                 }
                 
-                // Check if player is still looking at the target (Dot Product calculation)
                 Vector pDir = player.getEyeLocation().getDirection().normalize();
                 Vector tDir = target.getEyeLocation().toVector().subtract(player.getEyeLocation().toVector()).normalize();
-                if (pDir.dot(tDir) < 0.85) { // Roughly 30 degrees tolerance
+                if (pDir.dot(tDir) < 0.85) { 
                     player.sendMessage(Component.text("Siphon broken - You looked away!", NamedTextColor.GRAY));
                     cancel(); return;
                 }
@@ -443,7 +665,6 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                     cancel(); return;
                 }
 
-                // Draw Beam
                 Location pLoc = player.getEyeLocation();
                 Location tLoc = target.getLocation().add(0, 1, 0);
                 Vector dir = tLoc.toVector().subtract(pLoc.toVector());
@@ -586,7 +807,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                 for (Entity e : current.getWorld().getNearbyEntities(current, 1.5, 1.5, 1.5)) {
                     if (e instanceof LivingEntity le && !le.equals(player)) {
                         le.damage(baseDamage, player);
-                        le.getWorld().strikeLightningEffect(le.getLocation()); // Lightning on throw impact
+                        le.getWorld().strikeLightningEffect(le.getLocation());
                     }
                 }
             }
@@ -617,7 +838,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
                 int drops = 0;
                 @Override
                 public void run() {
-                    if (drops++ >= 24) { cancel(); return; } // Tripled from 8 to 24 drops
+                    if (drops++ >= 24) { cancel(); return; } 
                     
                     Location centerDrop = hitLoc.clone().add(dir.clone().multiply(drops * 3));
                     centerDrop.setY(hitLoc.getY() + 60);
@@ -640,7 +861,6 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
         player.sendMessage(Component.text("ORBITAL CATACLYSM INBOUND.", NamedTextColor.DARK_RED).decoration(TextDecoration.BOLD, true));
         worldSound(player.getLocation(), Sound.ENTITY_WITHER_SPAWN, 1.0f, 0.5f);
 
-        // Quintupled payload density: 90, 60, 30, 5
         int[] ringCounts = {90, 60, 30, 5};
         double[] ringRadii = {12.0, 8.0, 4.0, 0.0};
         
@@ -706,7 +926,6 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
 
     private void executePhantomDash(Player p) { 
         Location s = p.getLocation(); Vector d = s.getDirection().normalize();
-        // Nerfed dash distance from 6.0 to 3.5
         RayTraceResult r = p.getWorld().rayTraceBlocks(s.clone().add(0, 1, 0), d, 3.5, FluidCollisionMode.NEVER, true);
         double dist = (r != null && r.getHitBlock() != null) ? s.distance(r.getHitPosition().toLocation(p.getWorld())) - 0.5 : 3.5;
         Location e = s.clone().add(d.multiply(dist)); e.setYaw(s.getYaw()); e.setPitch(s.getPitch());
@@ -961,7 +1180,7 @@ public final class GodWeapons extends JavaPlugin implements Listener, CommandExe
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) return List.of("give", "menu");
-        if (args.length == 2 && args[0].equalsIgnoreCase("give")) return List.of("dimensionripper", "apexlancer", "vampiricaxe", "abyssaltether", "mjolnir", "colossusaegis", "directorscut", "stratospherictnt");
+        if (args.length == 2 && args[0].equalsIgnoreCase("give")) return List.of("dimensionripper", "apexlancer", "vampiricaxe", "abyssaltether", "mjolnir", "colossusaegis", "directorscut", "stratospherictnt", "arachnespindle", "sunchaserclarion");
         return Collections.emptyList();
     }
 }
